@@ -1,7 +1,6 @@
 package com.hella.test_ops.service.impl;
 
 import com.hella.test_ops.entity.Machine;
-import com.hella.test_ops.model.FixtureMachineMapDTO;
 import com.hella.test_ops.model.MachineDTO;
 import com.hella.test_ops.repository.MachineRepository;
 import com.hella.test_ops.service.MachineService;
@@ -16,7 +15,7 @@ import java.util.List;
 public class MachineServiceImpl implements MachineService {
     private final MachineRepository machineRepository;
 
-    public MachineServiceImpl(MachineRepository machineRepository, MachineService machineService, MachineServiceImpl machineService1) {
+    public MachineServiceImpl(MachineRepository machineRepository) {
         this.machineRepository = machineRepository;
     }
 
