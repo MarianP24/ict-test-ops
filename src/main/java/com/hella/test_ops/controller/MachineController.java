@@ -1,14 +1,16 @@
 package com.hella.test_ops.controller;
 
+import com.hella.test_ops.entity.Machine;
 import com.hella.test_ops.model.MachineDTO;
 import com.hella.test_ops.service.impl.MachineServiceImpl;
-import org.springframework.stereotype.Controller;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-@Controller
+@RestController
 @RequestMapping("/machines")
+@CrossOrigin(origins = "http://localhost:3000")
 public class MachineController {
     private final MachineServiceImpl machineService;
 
@@ -26,9 +28,14 @@ public class MachineController {
         return machineService.findById(id);
     }
 
-    @GetMapping
+    @GetMapping("/all-dto")
     public List<MachineDTO> getMachines() {
         return machineService.findAll();
+    }
+
+    @GetMapping("/all")
+    public ResponseEntity<List<Machine>> getAllMachines() {
+        return ResponseEntity.ok(machineService.findAllEntities());
     }
 
     @PutMapping("/{id}")

@@ -21,4 +21,6 @@ public interface MachineService {
     void deleteById(long id);
 
     Machine findEntityById(Long id);
+
+    List<Machine> findAllEntities();
 }

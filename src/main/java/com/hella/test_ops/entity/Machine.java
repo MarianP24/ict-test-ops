@@ -1,5 +1,6 @@
 package com.hella.test_ops.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -30,6 +31,7 @@ public class Machine {
     @Column
     private String hostname;
 
+    @JsonIgnore
     @ManyToMany(mappedBy = "machines")
     private Set<Fixture> fixtures = new HashSet<>();
 }
