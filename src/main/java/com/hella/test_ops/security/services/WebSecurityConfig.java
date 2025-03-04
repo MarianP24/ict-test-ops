@@ -2,7 +2,7 @@ package com.hella.test_ops.security.services;
 
 import com.hella.test_ops.security.jwt.AuthEntryPointJwt;
 import com.hella.test_ops.security.jwt.AuthTokenFilter;
-import com.hella.test_ops.service.impl.UserDetailsServiceImpl;
+import com.hella.test_ops.service.UserDetailsService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -26,7 +26,7 @@ import java.util.Arrays;
 @EnableMethodSecurity
 public class WebSecurityConfig {
     @Autowired
-    UserDetailsServiceImpl userDetailsService;
+    UserDetailsService userDetailsService;
 
     @Autowired
     private AuthEntryPointJwt unauthorizedHandler;
