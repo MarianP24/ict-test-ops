@@ -27,7 +27,7 @@ public class UserController {
     @GetMapping
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<List<Map<String, Object>>> getAllUsers() {
-        List<User> users = userRepository.findAll();
+        List<User> users = userRepository.findAllWithRoles();
 
         List<Map<String, Object>> userDTOs = users.stream()
                 .map(user -> {
@@ -48,7 +48,7 @@ public class UserController {
     @GetMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> getUserById(@PathVariable Long id) {
-        Optional<User> userOptional = userRepository.findById(id);
+        Optional<User> userOptional = userRepository.findByIdWithRoles(id);
 
         if (!userOptional.isPresent()) {
             return ResponseEntity.notFound().build();
