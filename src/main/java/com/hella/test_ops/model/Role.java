@@ -1,7 +1,11 @@
 package com.hella.test_ops.model;
 
 import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
 
+@Setter
+@Getter
 @Entity
 @Table(name = "roles")
 public class Role {
@@ -17,22 +21,6 @@ public class Role {
     }
 
     public Role(ERole name) {
-        this.name = name;
-    }
-
-    public Integer getId() {
-        return id;
-    }
-
-    public void setId(Integer id) {
-        this.id = id;
-    }
-
-    public ERole getName() {
-        return name;
-    }
-
-    public void setName(ERole name) {
         this.name = name;
     }
 }

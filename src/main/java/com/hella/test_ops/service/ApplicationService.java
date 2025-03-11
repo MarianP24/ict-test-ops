@@ -4,4 +4,6 @@ public interface ApplicationService {
     void shutdownApplication();
 
     void restartApplication();
+
+    String getLogContent();
 }

@@ -33,4 +33,6 @@ public interface FixtureService {
     void scheduleBusinessLogic();
 
     void removeFixtureFromMachine(long fixtureId);
+
+    String getCounterContent();
 }

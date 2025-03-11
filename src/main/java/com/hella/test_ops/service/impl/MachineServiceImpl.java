@@ -79,4 +79,9 @@ public class MachineServiceImpl implements MachineService {
         return machineRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Machine with id " + id + " not found"));
     }
+
+    @Override
+    public Machine findByHostname(String hostname) {
+        return machineRepository.findByHostname(hostname);
+    }
 }

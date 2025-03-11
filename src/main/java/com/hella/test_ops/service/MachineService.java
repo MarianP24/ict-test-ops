@@ -23,4 +23,6 @@ public interface MachineService {
     Machine findEntityById(Long id);
 
     List<Machine> findAllEntities();
+
+    Machine findByHostname(String hostname);
 }

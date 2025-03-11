@@ -12,6 +12,11 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -19,7 +24,10 @@ import java.util.concurrent.TimeUnit;
 @Service
 @RequiredArgsConstructor
 public class ApplicationServiceImpl implements ApplicationService {
+
     private final ApplicationContext applicationContext;
+    private final AppConfigReader appConfigReader;
+
 
     @Override
     public void shutdownApplication() {
@@ -94,6 +102,33 @@ public class ApplicationServiceImpl implements ApplicationService {
             return Class.forName("com.hella.ictmanager.IctManagerApplication");
         } catch (ClassNotFoundException e) {
             throw new IllegalStateException("Main application class not found", e);
+        }
+    }
+
+    @Override
+    public String getLogContent() {
+        try {
+            String logPathFromConfig = appConfigReader.getProperty("AppLogsPath");
+            if (logPathFromConfig == null) {
+                throw new RuntimeException("AppLogsPath not found in configuration");
+            }
+
+            // Resolve the full path
+            Path basePath = Paths.get(System.getProperty("user.dir"));
+            Path logPath = basePath.resolve(logPathFromConfig.replace("\\", File.separator));
+
+            log.info("Attempting to read log file from: {}", logPath);
+
+            if (!Files.exists(logPath)) {
+                log.warn("Log file not found at path: {}", logPath);
+                return "Log file not found at: " + logPath;
+            }
+
+            return Files.readString(logPath);
+
+        } catch (IOException e) {
+            log.error("Error reading log file", e);
+            throw new RuntimeException("Failed to read log file: " + e.getMessage(), e);
         }
     }
 }

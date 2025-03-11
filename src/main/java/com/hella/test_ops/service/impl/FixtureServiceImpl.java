@@ -6,6 +6,7 @@ import com.hella.test_ops.model.FixtureDTO;
 import com.hella.test_ops.repository.FixtureRepository;
 import com.hella.test_ops.repository.MachineRepository;
 import com.hella.test_ops.service.FixtureService;
+import com.hella.test_ops.service.MachineService;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -32,8 +33,11 @@ import java.util.stream.Collectors;
 public class FixtureServiceImpl implements FixtureService {
     private final FixtureRepository fixtureRepository;
     private final MachineRepository machineRepository;
+    private final MachineService machineService;
     private final ExecutorService executorService;
     private final Map<Long, Integer> fixtureCounterTotals = new HashMap<>();
+    private final AppConfigReader appConfigReader;
+    private final Map<Long, Map<String, Integer>> fixtureHostnameCounters = new HashMap<>(); // Fixture ID -> (Hostname -> Counter)
 
     @Value("${network.share.username}")
     private String username;
@@ -41,19 +45,17 @@ public class FixtureServiceImpl implements FixtureService {
     @Value("${network.share.password}")
     private String password;
 
-    @Value("${maintenance.subfolder}")
-    private String maintenanceSubfolder;
-
-    public FixtureServiceImpl(FixtureRepository fixtureRepository, MachineRepository machineRepository) {
+    public FixtureServiceImpl(FixtureRepository fixtureRepository, MachineRepository machineRepository, MachineService machineService, AppConfigReader appConfigReader) {
         this.fixtureRepository = fixtureRepository;
         this.machineRepository = machineRepository;
+        this.machineService = machineService;
+        this.appConfigReader = appConfigReader;
         this.executorService = Executors.newFixedThreadPool(
                 Runtime.getRuntime().availableProcessors()
         );
     }
 
     @PreDestroy
-    @Override
     public void shutdownExecutor() {
         executorService.shutdown();
         try {
@@ -132,7 +134,6 @@ public class FixtureServiceImpl implements FixtureService {
         log.info("Fixture {} has been added to machine {}", fixture.getFileName(), machine.getEquipmentName());
     }
 
-    @Override
     public void createMaintenanceFixtureReport() {
         fixtureCounterTotals.clear();
         List<Machine> allMachines = machineRepository.findAll();
@@ -190,7 +191,6 @@ public class FixtureServiceImpl implements FixtureService {
         log.info("Starting to process {} fixtures for hostname {}", fixtures.size(), hostname);
         try {
             String uncBasePath = createTemporaryConnection(hostname);
-            log.info("Successfully created connection to {} with base path {}", hostname, uncBasePath);
 
             for (Fixture fixture : fixtures) {
                 processSingleFixture(fixture, hostname, uncBasePath);
@@ -216,40 +216,96 @@ public class FixtureServiceImpl implements FixtureService {
     }
 
     private void processSingleFixture(Fixture fixture, String hostname, String uncBasePath) {
-        try {
-            int counter = processFixture(fixture, uncBasePath, hostname);
+        int counter = processFixture(fixture, uncBasePath, hostname);
 
-            // First check individual counter
-            if (counter >= fixture.getFixtureCounterSet()) {
-                resetCounter(fixture.getFileName(), uncBasePath + "\\" + fixture.getFileName(), hostname);
-                log.info("Counter has been reset for fixture {} on hostname {}",
-                        fixture.getFileName(), hostname);
-                return;
-            }
+        // filePath example: \\ROF01BEA28\C$\seica/Maintenance\013997_7774GF0001.wtg
+        // Check individual counter first
+        if (counter >= fixture.getFixtureCounterSet()) {
+            log.info("uncBasePath is {}", uncBasePath);
+            // uncBasePath example: \\ROF01BEA28\C$\seica/Maintenance
+            resetCounter(fixture.getFileName(), uncBasePath + "\\" + fixture.getFileName(), hostname);
+            log.info("Counter has been reset for fixture {} on hostname {}",
+                    fixture.getFileName(), hostname);
+            return;
+        }
 
-            // Update the total counter for this fixture
-            synchronized (fixtureCounterTotals) {
-                int currentTotal = fixtureCounterTotals.getOrDefault(fixture.getId(), 0);
-                int newTotal = currentTotal + counter;
-                fixtureCounterTotals.put(fixture.getId(), newTotal);
+        // Synchronize access to the shared map
+        synchronized (fixtureHostnameCounters) {
+            Map<String, Integer> hostnameCounters = fixtureHostnameCounters
+                    .computeIfAbsent(fixture.getId(), k -> new HashMap<>());
+            hostnameCounters.put(hostname, counter);
 
-                // Save the total counter to the database instead of individual counter
+            int newTotal = hostnameCounters.values().stream()
+                    .mapToInt(Integer::intValue)
+                    .sum();
+
+            if (newTotal >= fixture.getFixtureCounterSet()) {
+                try {
+                    // Reset all contributing counters
+                    for (Map.Entry<String, Integer> entry : hostnameCounters.entrySet()) {
+                        String contributingHostname = entry.getKey();
+                        String hostUncPath = createTemporaryConnection(contributingHostname);
+                        resetCounter(fixture.getFileName(),
+                                hostUncPath + "\\" + fixture.getFileName(),
+                                contributingHostname);
+                        log.info("Counter reset for fixture {} on hostname {} due to total limit",
+                                fixture.getFileName(), contributingHostname);
+                    }
+                    hostnameCounters.clear();
+                    fixture.setCounter(0);
+                    fixtureRepository.save(fixture);
+                } catch (Exception e) {
+                    log.error("Error processing fixture counters reset", e);
+                }
+            } else {
                 fixture.setCounter(newTotal);
                 fixtureRepository.save(fixture);
-
-                // Check if the total counter exceeds the threshold - just log
-                if (newTotal >= fixture.getFixtureCounterSet()) {
-                    log.info("Sum of all counters ({}) has reached threshold for fixture {} on hostname {}",
-                            newTotal, fixture.getFileName(), hostname);
-                }
             }
-        } catch (Exception e) {
-            log.error("Error processing fixture {} on hostname {}", fixture.getFileName(), hostname, e);
         }
     }
 
+//    private String createTemporaryConnection(String hostname) throws IOException {
+//        String mtSeicaPath = appConfigReader.getProperty("MtSeicaPath")
+//                .replace("C:", ""); // Remove C: from the path since we'll use network share
+//        String uncPath = String.format("\\\\%s\\C$%s", hostname, mtSeicaPath);
+//
+//        ProcessBuilder processBuilder = new ProcessBuilder(
+//                "cmd.exe", "/c", "net", "use", "\\\\" + hostname + "\\C$", password, "/user:" + username);
+//
+//        Process process = processBuilder.start();
+//
+//        try {
+//            int exitCode = process.waitFor();
+//            if (exitCode != 0) {
+//                throw new IOException("Failed to create temporary connection to " + hostname);
+//            }
+//            log.info("Successfully connected to hostname {}", hostname);
+//        } catch (InterruptedException e) {
+//            Thread.currentThread().interrupt();
+//            throw new IOException("Connection interrupted", e);
+//        }
+//
+//        return uncPath;
+//    }
+
     private String createTemporaryConnection(String hostname) throws IOException {
-        String uncPath = String.format("\\\\%s\\C$\\%s", hostname, maintenanceSubfolder);
+        Machine machine = machineService.findByHostname(hostname);
+
+        String equipmentType = machine.getEquipmentType();
+        String configPath = "";
+
+        if ("SEICA".equals(equipmentType)) {
+            log.info("SEICA detected for hostname {}", hostname);
+            configPath = appConfigReader.getProperty("MtSeicaPath");
+        } else if ("AEROFLEX".equals(equipmentType)) {
+            log.info("AEROFLEX detected for hostname {}", hostname);
+            configPath = appConfigReader.getProperty("MtAeroflexPath");
+        } else {
+            log.info("Ignoring equipment of type: {}", equipmentType);
+        }
+
+        String cleanPath = configPath.replace("C:", "");
+        String uncPath = String.format("\\\\%s\\C$%s", hostname, cleanPath);
 
         ProcessBuilder processBuilder = new ProcessBuilder(
                 "cmd.exe", "/c", "net", "use", "\\\\" + hostname + "\\C$", password, "/user:" + username);
@@ -313,19 +369,13 @@ public class FixtureServiceImpl implements FixtureService {
     }
 
     private void resetCounter(String fixtureFileName, String filePath, String hostname) {
-
-        Path projectPath = Paths.get("").toAbsolutePath().getParent();
-        Path counterPath = projectPath.resolve("test-ops")
-                .resolve("logs")
-                .resolve("contoare resetate.txt");
-
-        if (!Files.exists(counterPath.getParent())) {
-            throw new IllegalStateException("Required directory not found: " + counterPath.getParent() +
-                    ". Please ensure test-ops/logs directory exists.");
-        }
+        // filePAth is \\ROF01BEA28\C$\seica/Maintenance\013997_7774GF0001.wtg
+        // counterPathLog is the place where it writes the report \logs\ContoareResetate.txt
+        Path counterPathLog = Paths.get(getContoareResetatePath());
+        log.info("Attempting to write to counterPathLog file at: {}", counterPathLog);
 
         try (FileWriter wtgFileWriter = new FileWriter(filePath);
-             FileWriter countersFileWriter = new FileWriter(counterPath.toString(), true)) { // true = append mode
+             FileWriter countersFileWriter = new FileWriter(counterPathLog.toString(), true)) { // true = append mode
 
             wtgFileWriter.write("0 0 n");
             countersFileWriter.write("Contorul fixture-ului " + fixtureFileName +
@@ -334,12 +384,11 @@ public class FixtureServiceImpl implements FixtureService {
 
         } catch (IOException e) {
             log.error("An error occurred while resetting the counter", e);
-            throw new IllegalStateException("Failed to write to file: " + counterPath, e);
+            throw new IllegalStateException("Failed to write to file: " + counterPathLog, e);
         }
     }
 
     @Scheduled(cron = "0 45 13 * * ?")
-    @Override
     public void scheduleBusinessLogic() {
         createMaintenanceFixtureReport();
     }
@@ -350,5 +399,36 @@ public class FixtureServiceImpl implements FixtureService {
                 .orElseThrow(() -> new IllegalArgumentException("Fixture with id " + fixtureId + " not found"));
         fixture.getMachines().clear();
         fixtureRepository.save(fixture);
+    }
+
+    // display what contors have been reset
+    @Override
+    public String getCounterContent() {
+        try {
+            Path counterPath = Paths.get(getContoareResetatePath());
+            log.info("Attempting to read counter file from: {}", counterPath);
+
+            if (!Files.exists(counterPath)) {
+                log.warn("Counter file not found at path: {}", counterPath);
+                return "Counter file not found at: " + counterPath;
+            }
+
+            return Files.readString(counterPath);
+
+        } catch (IOException e) {
+            log.error("Error reading counter file", e);
+            throw new RuntimeException("Failed to read counter file: " + e.getMessage(), e);
+        }
+    }
+
+    // gets the path where reset of the contors is written
+    private String getContoareResetatePath() {
+        String counterPathFromConfig = appConfigReader.getProperty("CounterLogPath");
+        if (counterPathFromConfig == null) {
+            throw new RuntimeException("CounterPath not found in configuration");
+        }
+
+        Path basePath = Paths.get(System.getProperty("user.dir"));
+        return basePath.resolve(counterPathFromConfig.replace("\\", File.separator)).toString();
     }
 }

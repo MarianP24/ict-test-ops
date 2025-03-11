@@ -11,4 +11,6 @@ public interface MachineRepository extends JpaRepository<Machine, Long> {
     @Modifying
     @Query(value = "DELETE FROM fixture_machine WHERE machine_id = :machineId", nativeQuery = true)
     void deleteFixtureRelations(Long machineId);
+
+    Machine findByHostname(String hostname);
 }
