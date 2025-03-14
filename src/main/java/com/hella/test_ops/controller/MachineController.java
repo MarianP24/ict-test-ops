@@ -14,7 +14,6 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/machines")
-@CrossOrigin(origins = "http://localhost:3000")
 public class MachineController {
     private final MachineServiceImpl machineService;
     private final MachineRepository machineRepository;
