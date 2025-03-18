@@ -35,4 +35,6 @@ public interface FixtureService {
     void removeFixtureFromMachine(long fixtureId);
 
     String getCounterContent();
+
+    List<Fixture> findAllEntities();
 }

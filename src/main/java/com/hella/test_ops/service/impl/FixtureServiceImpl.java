@@ -92,6 +92,13 @@ public class FixtureServiceImpl implements FixtureService {
     }
 
     @Override
+    public List<Fixture> findAllEntities() {
+        List<Fixture> fixtures = fixtureRepository.findAll();
+        log.info("Found {} machines", fixtures.size());
+        return fixtures;
+    }
+
+    @Override
     public Fixture findEntityById(long id) {
         return fixtureRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Fixture with id " + id + " not found"));
