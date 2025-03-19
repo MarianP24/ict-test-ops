@@ -3,6 +3,7 @@ package com.hella.test_ops.controller;
 import com.hella.test_ops.entity.Fixture;
 import com.hella.test_ops.model.FixtureDTO;
 import com.hella.test_ops.service.FixtureService;
+import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;

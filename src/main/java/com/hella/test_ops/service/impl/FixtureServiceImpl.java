@@ -8,6 +8,7 @@ import com.hella.test_ops.repository.MachineRepository;
 import com.hella.test_ops.service.FixtureService;
 import com.hella.test_ops.service.MachineService;
 import jakarta.annotation.PreDestroy;
+import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -118,6 +119,7 @@ public class FixtureServiceImpl implements FixtureService {
         log.info("Fixture {} has been updated", fixtureDTO.fileName());
     }
 
+    @Transactional
     @Override
     public void deleteById(long id) {
         fixtureRepository.deleteById(id);
@@ -141,6 +143,8 @@ public class FixtureServiceImpl implements FixtureService {
         log.info("Fixture {} has been added to machine {}", fixture.getFileName(), machine.getEquipmentName());
     }
 
+    @Transactional
+    @Override
     public void createMaintenanceFixtureReport() {
         fixtureCounterTotals.clear();
         List<Machine> allMachines = machineRepository.findAll();
@@ -400,6 +404,7 @@ public class FixtureServiceImpl implements FixtureService {
         createMaintenanceFixtureReport();
     }
 
+    @Transactional
     @Override
     public void removeFixtureFromMachine(long fixtureId) {
         Fixture fixture = fixtureRepository.findById(fixtureId)
