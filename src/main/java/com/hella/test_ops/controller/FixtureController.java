@@ -12,6 +12,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @RestController
@@ -62,8 +63,15 @@ public class FixtureController {
 
     @PostMapping("/{fixtureId}/machines/{machineId}")
     @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
-    public void addFixtureToMachine(@PathVariable long fixtureId,@PathVariable long machineId) {
-        fixtureService.addFixtureToMachine(fixtureId, machineId);
+    public ResponseEntity<Void> addFixtureToMachine(@PathVariable long fixtureId, @PathVariable long machineId) {
+        try {
+            fixtureService.addFixtureToMachine(fixtureId, machineId);
+            return ResponseEntity.ok().build();
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).build();
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 
     @PostMapping ("/maintenance")

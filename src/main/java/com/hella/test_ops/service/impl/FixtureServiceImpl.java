@@ -126,6 +126,7 @@ public class FixtureServiceImpl implements FixtureService {
         log.info("Fixture with id {} has been deleted", id);
     }
 
+    @Transactional
     @Override
     public void addFixtureToMachine(long fixtureId, long machineId) {
         Fixture fixture = fixtureRepository.findById(fixtureId)
@@ -135,8 +136,9 @@ public class FixtureServiceImpl implements FixtureService {
 
         if (fixture.getMachines().contains(machine)) {
             log.info("Fixture {} is already associated with machine {}", fixture.getFileName(), machine.getEquipmentName());
-            return;
+            throw new IllegalStateException("Fixture '" + fixture.getFileName() + "' is already assigned to machine '" + machine.getEquipmentName() + "'");
         }
+
         fixture.getMachines().add(machine);
 
         fixtureRepository.save(fixture);
