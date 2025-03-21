@@ -5,6 +5,7 @@ import com.hella.test_ops.model.FixtureMachineMapDTO;
 import com.hella.test_ops.model.MachineDTO;
 import com.hella.test_ops.repository.MachineRepository;
 import com.hella.test_ops.service.impl.MachineServiceImpl;
+import jakarta.transaction.Transactional;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -59,7 +60,9 @@ public class MachineController {
         machineService.deleteById(id);
     }
 
+    @Transactional
     @GetMapping("/fixtureMap")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
     public List<FixtureMachineMapDTO> showFixtureMachineMap() {
         List<Machine> machines = machineRepository.findAll();
         return machines.stream()
