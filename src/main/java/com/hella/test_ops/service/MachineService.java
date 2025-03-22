@@ -1,11 +1,13 @@
 package com.hella.test_ops.service;
 
+import com.hella.test_ops.entity.Fixture;
 import com.hella.test_ops.entity.Machine;
 import com.hella.test_ops.model.MachineDTO;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Set;
 
 @Service
 public interface MachineService {
@@ -25,4 +27,8 @@ public interface MachineService {
     List<Machine> findAllEntities();
 
     Machine findByHostname(String hostname);
+
+    @Transactional
+    Set<Fixture> getMachineFixtureMap(Long machineId);
+
 }

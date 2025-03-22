@@ -1,5 +1,6 @@
 package com.hella.test_ops.service.impl;
 
+import com.hella.test_ops.entity.Fixture;
 import com.hella.test_ops.entity.Machine;
 import com.hella.test_ops.model.MachineDTO;
 import com.hella.test_ops.repository.MachineRepository;
@@ -9,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Set;
 
 @Slf4j
 @Component
@@ -83,5 +85,14 @@ public class MachineServiceImpl implements MachineService {
     @Override
     public Machine findByHostname(String hostname) {
         return machineRepository.findByHostname(hostname);
+    }
+
+    @Transactional
+    @Override
+    public Set<Fixture> getMachineFixtureMap(Long machineId) {
+        Machine machine = machineRepository.findById(machineId)
+                .orElseThrow(() -> new IllegalArgumentException("Machine with id " + machineId + " not found"));
+        log.info("Retrieved {} fixtures for machine with id {}", machine.getFixtures().size(), machineId);
+        return machine.getFixtures();
     }
 }

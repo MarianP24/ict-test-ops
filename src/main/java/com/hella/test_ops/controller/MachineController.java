@@ -1,5 +1,6 @@
 package com.hella.test_ops.controller;
 
+import com.hella.test_ops.entity.Fixture;
 import com.hella.test_ops.entity.Machine;
 import com.hella.test_ops.model.FixtureMachineMapDTO;
 import com.hella.test_ops.model.MachineDTO;
@@ -11,17 +12,16 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/machines")
 public class MachineController {
     private final MachineServiceImpl machineService;
-    private final MachineRepository machineRepository;
 
-    public MachineController(MachineServiceImpl machineService, MachineRepository machineRepository) {
+    public MachineController(MachineServiceImpl machineService) {
         this.machineService = machineService;
-        this.machineRepository = machineRepository;
     }
 
     @PostMapping
@@ -60,17 +60,9 @@ public class MachineController {
         machineService.deleteById(id);
     }
 
-    @Transactional
-    @GetMapping("/fixtureMap")
+    @GetMapping("/{id}/fixtures")
     @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
-    public List<FixtureMachineMapDTO> showFixtureMachineMap() {
-        List<Machine> machines = machineRepository.findAll();
-        return machines.stream()
-                .flatMap(machine -> machine.getFixtures().stream()
-                        .map(fixture -> new FixtureMachineMapDTO(
-                                machine.getId(),
-                                fixture.getId()
-                        )))
-                .collect(Collectors.toList());
+    public Set<Fixture> getMachineFixtureMap(@PathVariable long id) {
+        return machineService.getMachineFixtureMap(id);
     }
 }
