@@ -95,4 +95,22 @@ public class MachineServiceImpl implements MachineService {
         log.info("Retrieved {} fixtures for machine with id {}", machine.getFixtures().size(), machineId);
         return machine.getFixtures();
     }
+
+    @Override
+    public List<MachineDTO> findByFilters(
+            String equipmentName,
+            Integer internalFactory,
+            String serialNumber,
+            String equipmentType,
+            String hostname) {
+
+        List<Machine> filteredMachines = machineRepository.findByFilters(
+                equipmentName, internalFactory, serialNumber, equipmentType, hostname);
+
+        log.info("Found {} machines matching the filter criteria", filteredMachines.size());
+
+        return filteredMachines.stream()
+                .map(MachineDTO::convertToDTO)
+                .toList();
+    }
 }

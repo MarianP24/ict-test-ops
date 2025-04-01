@@ -65,4 +65,19 @@ public class MachineController {
     public Set<Fixture> getMachineFixtureMap(@PathVariable long id) {
         return machineService.getMachineFixtureMap(id);
     }
+
+    @GetMapping("/filter")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<List<MachineDTO>> filterMachines(
+            @RequestParam(required = false) String equipmentName,
+            @RequestParam(required = false) Integer internalFactory,
+            @RequestParam(required = false) String serialNumber,
+            @RequestParam(required = false) String equipmentType,
+            @RequestParam(required = false) String hostname) {
+
+        List<MachineDTO> filteredMachines = machineService.findByFilters(
+                equipmentName, internalFactory, serialNumber, equipmentType, hostname);
+
+        return ResponseEntity.ok(filteredMachines);
+    }
 }

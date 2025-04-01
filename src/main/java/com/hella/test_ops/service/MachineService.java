@@ -31,4 +31,11 @@ public interface MachineService {
     @Transactional
     Set<Fixture> getMachineFixtureMap(Long machineId);
 
+    List<MachineDTO> findByFilters(
+            String equipmentName,
+            Integer internalFactory,
+            String serialNumber,
+            String equipmentType,
+            String hostname
+    );
 }
