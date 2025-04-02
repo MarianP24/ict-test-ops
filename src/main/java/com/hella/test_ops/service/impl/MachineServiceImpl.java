@@ -5,6 +5,7 @@ import com.hella.test_ops.entity.Machine;
 import com.hella.test_ops.model.MachineDTO;
 import com.hella.test_ops.repository.MachineRepository;
 import com.hella.test_ops.service.MachineService;
+import com.hella.test_ops.specification.MachineSpecification;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -104,8 +105,15 @@ public class MachineServiceImpl implements MachineService {
             String equipmentType,
             String hostname) {
 
-        List<Machine> filteredMachines = machineRepository.findByFilters(
-                equipmentName, internalFactory, serialNumber, equipmentType, hostname);
+        List<Machine> filteredMachines = machineRepository.findAll(
+                MachineSpecification.withFilters(
+                        equipmentName,
+                        internalFactory,
+                        serialNumber,
+                        equipmentType,
+                        hostname
+                )
+        );
 
         log.info("Found {} machines matching the filter criteria", filteredMachines.size());
 
