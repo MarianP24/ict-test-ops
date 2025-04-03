@@ -7,6 +7,7 @@ import com.hella.test_ops.repository.FixtureRepository;
 import com.hella.test_ops.repository.MachineRepository;
 import com.hella.test_ops.service.FixtureService;
 import com.hella.test_ops.service.MachineService;
+import com.hella.test_ops.specification.FixtureSpecification;
 import jakarta.annotation.PreDestroy;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
@@ -277,30 +278,6 @@ public class FixtureServiceImpl implements FixtureService {
         }
     }
 
-//    private String createTemporaryConnection(String hostname) throws IOException {
-//        String mtSeicaPath = appConfigReader.getProperty("MtSeicaPath")
-//                .replace("C:", ""); // Remove C: from the path since we'll use network share
-//        String uncPath = String.format("\\\\%s\\C$%s", hostname, mtSeicaPath);
-//
-//        ProcessBuilder processBuilder = new ProcessBuilder(
-//                "cmd.exe", "/c", "net", "use", "\\\\" + hostname + "\\C$", password, "/user:" + username);
-//
-//        Process process = processBuilder.start();
-//
-//        try {
-//            int exitCode = process.waitFor();
-//            if (exitCode != 0) {
-//                throw new IOException("Failed to create temporary connection to " + hostname);
-//            }
-//            log.info("Successfully connected to hostname {}", hostname);
-//        } catch (InterruptedException e) {
-//            Thread.currentThread().interrupt();
-//            throw new IOException("Connection interrupted", e);
-//        }
-//
-//        return uncPath;
-//    }
-
     private String createTemporaryConnection(String hostname) throws IOException {
         Machine machine = machineService.findByHostname(hostname);
 
@@ -444,5 +421,30 @@ public class FixtureServiceImpl implements FixtureService {
 
         Path basePath = Paths.get(System.getProperty("user.dir"));
         return basePath.resolve(counterPathFromConfig.replace("\\", File.separator)).toString();
+    }
+
+    @Override
+    public List<FixtureDTO> findByFilters(
+            String fileName,
+            String programName,
+            String productName,
+            String business,
+            Long fixtureCounterSet) {
+
+        List<Fixture> filteredFixtures = fixtureRepository.findAll(
+                FixtureSpecification.withFilters(
+                        fileName,
+                        programName,
+                        productName,
+                        business,
+                        fixtureCounterSet
+                )
+        );
+
+        log.info("Found {} fixtures matching the filter criteria", filteredFixtures.size());
+
+        return filteredFixtures.stream()
+                .map(FixtureDTO::convertToDTO)
+                .toList();
     }
 }

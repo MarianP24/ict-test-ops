@@ -2,18 +2,14 @@ package com.hella.test_ops.controller;
 
 import com.hella.test_ops.entity.Fixture;
 import com.hella.test_ops.entity.Machine;
-import com.hella.test_ops.model.FixtureMachineMapDTO;
 import com.hella.test_ops.model.MachineDTO;
-import com.hella.test_ops.repository.MachineRepository;
 import com.hella.test_ops.service.impl.MachineServiceImpl;
-import jakarta.transaction.Transactional;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/machines")

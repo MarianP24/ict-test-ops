@@ -37,4 +37,12 @@ public interface FixtureService {
     String getCounterContent();
 
     List<Fixture> findAllEntities();
+
+    List<FixtureDTO> findByFilters(
+            String fileName,
+            String programName,
+            String productName,
+            String business,
+            Long fixtureCounterSet
+    );
 }

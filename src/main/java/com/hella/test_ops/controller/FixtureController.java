@@ -3,7 +3,6 @@ package com.hella.test_ops.controller;
 import com.hella.test_ops.entity.Fixture;
 import com.hella.test_ops.model.FixtureDTO;
 import com.hella.test_ops.service.FixtureService;
-import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -12,7 +11,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
 @Slf4j
 @RestController
@@ -92,5 +90,20 @@ public class FixtureController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body("Error retrieving counter content: " + e.getMessage());
         }
+    }
+
+    @GetMapping("/filter")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<List<FixtureDTO>> filterFixtures(
+            @RequestParam(required = false) String fileName,
+            @RequestParam(required = false) String programName,
+            @RequestParam(required = false) String productName,
+            @RequestParam(required = false) String business,
+            @RequestParam(required = false) Long fixtureCounterSet) {
+
+        List<FixtureDTO> filteredFixtures = fixtureService.findByFilters(
+                fileName, programName, productName, business, fixtureCounterSet);
+
+        return ResponseEntity.ok(filteredFixtures);
     }
 }
