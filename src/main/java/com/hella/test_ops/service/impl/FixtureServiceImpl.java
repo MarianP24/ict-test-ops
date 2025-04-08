@@ -87,7 +87,7 @@ public class FixtureServiceImpl implements FixtureService {
     @Override
     public List<FixtureDTO> findAll() {
         List<Fixture> fixtures = fixtureRepository.findAll();
-        log.info("Found {} fixtures", fixtures.size());
+        log.info("Found {} fixtures (DTO)", fixtures.size());
         return fixtures.stream()
                 .map(FixtureDTO::convertToDTO)
                 .toList();
@@ -96,7 +96,7 @@ public class FixtureServiceImpl implements FixtureService {
     @Override
     public List<Fixture> findAllEntities() {
         List<Fixture> fixtures = fixtureRepository.findAll();
-        log.info("Found {} machines", fixtures.size());
+        log.info("Found {} fixtures", fixtures.size());
         return fixtures;
     }
 
