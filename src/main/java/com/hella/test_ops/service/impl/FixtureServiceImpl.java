@@ -446,4 +446,13 @@ public class FixtureServiceImpl implements FixtureService {
                 .map(FixtureDTO::convertToDTO)
                 .toList();
     }
+
+    @Transactional
+    @Override
+    public Set<Machine> getFixtureMachineMap(Long fixtureId) {
+        Fixture fixture = fixtureRepository.findById(fixtureId)
+                .orElseThrow(() -> new IllegalArgumentException("Fixture with id " + fixtureId + " not found"));
+        log.info("Retrieved {} machines for fixture with id {}", fixture.getMachines().size(), fixtureId);
+        return fixture.getMachines();
+    }
 }

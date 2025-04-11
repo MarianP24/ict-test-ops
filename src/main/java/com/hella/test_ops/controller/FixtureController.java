@@ -1,6 +1,7 @@
 package com.hella.test_ops.controller;
 
 import com.hella.test_ops.entity.Fixture;
+import com.hella.test_ops.entity.Machine;
 import com.hella.test_ops.model.FixtureDTO;
 import com.hella.test_ops.service.FixtureService;
 import lombok.extern.slf4j.Slf4j;
@@ -11,6 +12,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Set;
 
 @Slf4j
 @RestController
@@ -105,5 +107,18 @@ public class FixtureController {
                 fileName, programName, productName, business, fixtureCounterSet);
 
         return ResponseEntity.ok(filteredFixtures);
+    }
+
+    @GetMapping("/{id}/machineMap")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<Set<Machine>> getFixtureMachineMap(@PathVariable long id) {
+        try {
+            Set<Machine> machines = fixtureService.getFixtureMachineMap(id);
+            return ResponseEntity.ok(machines);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 }

@@ -1,12 +1,15 @@
 package com.hella.test_ops.service;
 
 import com.hella.test_ops.entity.Fixture;
+import com.hella.test_ops.entity.Machine;
 import com.hella.test_ops.model.FixtureDTO;
 import jakarta.annotation.PreDestroy;
+import jakarta.transaction.Transactional;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Set;
 
 @Service
 public interface FixtureService {
@@ -45,4 +48,8 @@ public interface FixtureService {
             String business,
             Long fixtureCounterSet
     );
+
+    @Transactional
+    Set<Machine> getFixtureMachineMap(Long fixtureId);
+
 }
