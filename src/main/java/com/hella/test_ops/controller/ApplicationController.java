@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -19,18 +20,21 @@ public class ApplicationController {
     private final ApplicationService applicationService;
 
     @PostMapping("/shutdown")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
     public ResponseEntity<String> shutdownApplication() {
         applicationService.shutdownApplication();
         return ResponseEntity.ok("Application shutdown initiated");
     }
 
     @PostMapping("/restart")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
     public ResponseEntity<String> restartApplication() {
         applicationService.restartApplication();
         return ResponseEntity.ok("Application restart initiated");
     }
 
     @GetMapping(value = "/logs", produces = MediaType.TEXT_PLAIN_VALUE)
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
     public ResponseEntity<String> getApplicationLogs() {
         try {
             String logContent = applicationService.getLogContent();

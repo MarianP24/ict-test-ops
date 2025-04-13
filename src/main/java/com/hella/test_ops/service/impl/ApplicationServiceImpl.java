@@ -99,7 +99,7 @@ public class ApplicationServiceImpl implements ApplicationService {
 
     private Class<?> getMainApplicationClass() {
         try {
-            return Class.forName("com.hella.ictmanager.IctManagerApplication");
+            return Class.forName("com.hella.test_ops.TestOpsApplication");
         } catch (ClassNotFoundException e) {
             throw new IllegalStateException("Main application class not found", e);
         }
