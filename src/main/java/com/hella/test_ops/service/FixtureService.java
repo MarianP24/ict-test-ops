@@ -32,6 +32,8 @@ public interface FixtureService {
 
     void createMaintenanceFixtureReport();
 
+    String createMaintenanceReportForSingleFixture(long fixtureId);
+
     @Scheduled(cron = "0 45 13 * * ?")
     void scheduleBusinessLogic();
 

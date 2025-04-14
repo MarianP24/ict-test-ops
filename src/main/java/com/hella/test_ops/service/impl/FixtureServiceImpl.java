@@ -200,6 +200,79 @@ public class FixtureServiceImpl implements FixtureService {
         log.info("Maintenance report has been concluded for all fixtures with valid hostnames");
     }
 
+    /**
+     * Creates a maintenance report for a single fixture by processing it on all machines
+     * it's connected to.
+     *
+     * @param fixtureId The ID of the fixture to process
+     * @return A summary of the processing result
+     */
+    @Transactional
+    @Override
+    public String createMaintenanceReportForSingleFixture(long fixtureId) {
+        log.info("Starting maintenance processing for fixture ID: {}", fixtureId);
+
+        // Clear counter for this specific fixture if it exists in the map
+        fixtureCounterTotals.remove(fixtureId);
+
+        // Retrieve the fixture
+        Fixture fixture = fixtureRepository.findById(fixtureId)
+                .orElseThrow(() -> new IllegalArgumentException("Fixture with ID " + fixtureId + " not found"));
+
+        // Check if fixture has any machines
+        if (fixture.getMachines().isEmpty()) {
+            log.warn("Fixture ID {} is not associated with any machines", fixtureId);
+            return "Fixture is not associated with any machines. No processing needed.";
+        }
+
+        // Group fixtures by hostname (for this single fixture)
+        Map<String, List<Fixture>> fixturesByHostname = fixture.getMachines().stream()
+                .filter(m -> m.getHostname() != null)
+                .map(m -> new AbstractMap.SimpleEntry<>(m.getHostname(), fixture))
+                .collect(Collectors.groupingBy(
+                        Map.Entry::getKey,
+                        Collectors.mapping(Map.Entry::getValue, Collectors.toList())));
+
+        // Log machines with null hostnames
+        long nullHostnameCount = fixture.getMachines().stream()
+                .filter(m -> m.getHostname() == null)
+                .count();
+
+        if (nullHostnameCount > 0) {
+            log.warn("Fixture ID {} has {} machines with null hostnames that will be skipped",
+                    fixtureId, nullHostnameCount);
+        }
+
+        if (fixturesByHostname.isEmpty()) {
+            log.warn("Fixture ID {} has no machines with valid hostnames", fixtureId);
+            return "Fixture has no machines with valid hostnames. No processing performed.";
+        }
+
+        // Log processing information
+        log.info("Processing fixture ID {} on {} unique hostnames", fixtureId, fixturesByHostname.size());
+        fixturesByHostname.forEach((hostname, fixtureList) ->
+                log.info("Hostname: {} has fixture {}", hostname, fixture.getFileName()));
+
+        // Process each hostname with the fixture in parallel
+        List<CompletableFuture<Void>> futures = fixturesByHostname.entrySet().stream()
+                .map(entry -> CompletableFuture.runAsync(() ->
+                        processHostnameFixtures(entry.getKey(), entry.getValue()), executorService))
+                .toList();
+
+        // Wait for all processing to complete
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+        log.info("Maintenance report completed for fixture ID: {}", fixtureId);
+
+        // Return a summary message
+        int hostCount = fixturesByHostname.size();
+        return String.format("Fixture %s (ID: %d) was processed on %d machine%s.",
+                fixture.getFileName(),
+                fixtureId,
+                hostCount,
+                hostCount == 1 ? "" : "s");
+    }
+
     private void processHostnameFixtures(String hostname, List<Fixture> fixtures) {
         log.info("Starting to process {} fixtures for hostname {}", fixtures.size(), hostname);
         try {
@@ -315,7 +388,6 @@ public class FixtureServiceImpl implements FixtureService {
         return uncPath;
     }
 
-
     private void removeConnection(String hostname) {
         try {
             ProcessBuilder processBuilder = new ProcessBuilder(
@@ -335,6 +407,7 @@ public class FixtureServiceImpl implements FixtureService {
         }
     }
 
+    // reads the maintenance file
     private int processFixture(Fixture fixture, String basePath, String hostname) {
         String fullPath = basePath + "\\" + fixture.getFileName();
         File file = new File(fullPath);

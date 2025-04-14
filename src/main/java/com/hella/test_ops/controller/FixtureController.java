@@ -80,6 +80,22 @@ public class FixtureController {
         fixtureService.createMaintenanceFixtureReport();
     }
 
+    @PostMapping("/maintenance/{fixtureId}")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<String> createMaintenanceReportForSingleFixture(@PathVariable long fixtureId) {
+        try {
+            String result = fixtureService.createMaintenanceReportForSingleFixture(fixtureId);
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
+            log.error("Failed to process maintenance report for fixture ID {}: {}", fixtureId, e.getMessage());
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (Exception e) {
+            log.error("Error processing maintenance report for fixture ID {}", fixtureId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("An error occurred while processing the fixture maintenance report: " + e.getMessage());
+        }
+    }
+
     @GetMapping("/counter")
     @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
     public ResponseEntity<String> getCounterContent() {
