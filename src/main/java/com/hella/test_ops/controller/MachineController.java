@@ -76,4 +76,20 @@ public class MachineController {
 
         return ResponseEntity.ok(filteredMachines);
     }
+
+    @PutMapping("/{id}/assign-vpn")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<Void> assignVpnServer(
+            @PathVariable long id,
+            @RequestParam long vpnServerId) {
+        machineService.assignVpnServer(id, vpnServerId);
+        return ResponseEntity.ok().build();
+    }
+
+    @PutMapping("/{id}/remove-vpn")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<Void> removeVpnServer(@PathVariable long id) {
+        machineService.removeVpnServer(id);
+        return ResponseEntity.ok().build();
+    }
 }

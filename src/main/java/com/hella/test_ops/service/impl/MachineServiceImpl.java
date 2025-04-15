@@ -2,9 +2,11 @@ package com.hella.test_ops.service.impl;
 
 import com.hella.test_ops.entity.Fixture;
 import com.hella.test_ops.entity.Machine;
+import com.hella.test_ops.entity.VpnServer;
 import com.hella.test_ops.model.MachineDTO;
 import com.hella.test_ops.repository.MachineRepository;
 import com.hella.test_ops.service.MachineService;
+import com.hella.test_ops.service.VpnServerService;
 import com.hella.test_ops.specification.MachineSpecification;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
@@ -17,9 +19,12 @@ import java.util.Set;
 @Component
 public class MachineServiceImpl implements MachineService {
     private final MachineRepository machineRepository;
+    private final VpnServerService vpnServerService;
 
-    public MachineServiceImpl(MachineRepository machineRepository) {
+
+    public MachineServiceImpl(MachineRepository machineRepository, VpnServerServiceImpl vpnServerService) {
         this.machineRepository = machineRepository;
+        this.vpnServerService = vpnServerService;
     }
 
     @Override
@@ -121,4 +126,26 @@ public class MachineServiceImpl implements MachineService {
                 .map(MachineDTO::convertToDTO)
                 .toList();
     }
+
+    @Override
+    @Transactional
+    public void assignVpnServer(long machineId, long vpnServerId) {
+        Machine machine = findEntityById(machineId);
+        VpnServer vpnServer = vpnServerService.findEntityById(vpnServerId);
+
+        machine.setVpnServer(vpnServer);
+        machineRepository.save(machine);
+
+        log.info("Assigned VPN server {} to machine {}", vpnServer.getVpnName(), machine.getEquipmentName());
+    }
+
+    @Override
+    @Transactional
+    public void removeVpnServer(long machineId) {
+        Machine machine = findEntityById(machineId);
+        machine.setVpnServer(null);
+        machineRepository.save(machine);
+        log.info("Removed VPN server assignment from machine {}", machine.getEquipmentName());
+    }
+
 }

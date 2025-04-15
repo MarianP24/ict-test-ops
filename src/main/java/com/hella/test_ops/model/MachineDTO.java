@@ -2,7 +2,7 @@ package com.hella.test_ops.model;
 
 import com.hella.test_ops.entity.Machine;
 
-public record MachineDTO(String equipmentName, String equipmentType, String serialNumber, int internalFactory, String hostname) {
+public record MachineDTO(String equipmentName, String equipmentType, String serialNumber, int internalFactory, String hostname, Long vpnServerId) {
 
     public Machine convertToEntity() {
         Machine machine = new Machine();
@@ -15,6 +15,7 @@ public record MachineDTO(String equipmentName, String equipmentType, String seri
     }
 
     public static MachineDTO convertToDTO(Machine machine) {
-        return new MachineDTO(machine.getEquipmentName(), machine.getEquipmentType(), machine.getSerialNumber(), machine.getInternalFactory(), machine.getHostname());
+        Long vpnId = machine.getVpnServer() != null ? machine.getVpnServer().getId() : null;
+        return new MachineDTO(machine.getEquipmentName(), machine.getEquipmentType(), machine.getSerialNumber(), machine.getInternalFactory(), machine.getHostname(), vpnId);
     }
 }

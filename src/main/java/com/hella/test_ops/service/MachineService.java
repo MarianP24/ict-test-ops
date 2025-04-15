@@ -38,4 +38,9 @@ public interface MachineService {
             String equipmentType,
             String hostname
     );
+
+    void assignVpnServer(long machineId, long vpnServerId);
+
+    void removeVpnServer(long machineId);
+
 }

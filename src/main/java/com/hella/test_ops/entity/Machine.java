@@ -31,6 +31,10 @@ public class Machine {
     @Column
     private String hostname;
 
+    @ManyToOne
+    @JoinColumn(name = "vpn_server_id")
+    private VpnServer vpnServer;
+
     @JsonIgnore
     @ManyToMany(mappedBy = "machines")
     private Set<Fixture> fixtures = new HashSet<>();
