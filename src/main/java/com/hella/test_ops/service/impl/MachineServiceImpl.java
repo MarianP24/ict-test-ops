@@ -133,6 +133,12 @@ public class MachineServiceImpl implements MachineService {
         Machine machine = findEntityById(machineId);
         VpnServer vpnServer = vpnServerService.findEntityById(vpnServerId);
 
+        if (machine.getVpnServer() != null && machine.getVpnServer().getId() == vpnServerId) {
+            log.info("Machine {} is already assigned to VPN server {}",
+                    machine.getEquipmentName(), vpnServer.getVpnName());
+            return;
+        }
+
         machine.setVpnServer(vpnServer);
         machineRepository.save(machine);
 
