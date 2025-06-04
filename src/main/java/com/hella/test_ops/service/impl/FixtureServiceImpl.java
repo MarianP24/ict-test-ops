@@ -2,6 +2,7 @@ package com.hella.test_ops.service.impl;
 
 import com.hella.test_ops.entity.Fixture;
 import com.hella.test_ops.entity.Machine;
+import com.hella.test_ops.entity.VpnServer;
 import com.hella.test_ops.model.FixtureDTO;
 import com.hella.test_ops.repository.FixtureRepository;
 import com.hella.test_ops.repository.MachineRepository;
@@ -15,10 +16,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileWriter;
-import java.io.IOException;
+import java.io.*;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -46,6 +46,12 @@ public class FixtureServiceImpl implements FixtureService {
 
     @Value("${network.share.password}")
     private String password;
+
+    @Value("${network.share.vpnUsername}")
+    private String vpnUsername;
+
+    @Value("${network.share.vpnPassword}")
+    private String vpnPassword;
 
     public FixtureServiceImpl(FixtureRepository fixtureRepository, MachineRepository machineRepository, MachineService machineService, AppConfigReader appConfigReader) {
         this.fixtureRepository = fixtureRepository;
@@ -351,35 +357,94 @@ public class FixtureServiceImpl implements FixtureService {
     }
 
     private String createTemporaryConnection(String hostname) throws IOException {
-        Machine machine = machineService.findByHostname(hostname);
+        // Keep the original hostname for database lookup
+        String originalHostname = hostname;
+        Machine machine = machineService.findByHostname(originalHostname);
 
         String equipmentType = machine.getEquipmentType();
         String configPath = "";
 
         if ("SEICA".equals(equipmentType)) {
-            log.info("SEICA detected for hostname {}", hostname);
+            log.info("SEICA detected for hostname {}", originalHostname);
             configPath = appConfigReader.getProperty("MtSeicaPath");
         } else if ("AEROFLEX".equals(equipmentType)) {
-            log.info("AEROFLEX detected for hostname {}", hostname);
+            log.info("AEROFLEX detected for hostname {}", originalHostname);
             configPath = appConfigReader.getProperty("MtAeroflexPath");
         } else {
             log.info("Ignoring equipment of type: {}", equipmentType);
         }
 
+        // Store the connection target (will be modified if VPN is needed)
+        String connectionTarget = originalHostname;
         String cleanPath = configPath.replace("C:", "");
-        String uncPath = String.format("\\\\%s\\C$%s", hostname, cleanPath);
 
+        // Determine if this machine requires VPN connection
+        boolean requiresVpn = machine.getVpnServer() != null;
+
+        // Use VPN credentials if VPN is required, otherwise use regular credentials
+        String connectionUsername = requiresVpn ? vpnUsername : username;
+        String connectionPassword = requiresVpn ? vpnPassword : password;
+
+        // Connect to VPN first if needed
+        if (requiresVpn) {
+            // Use the original hostname for VPN connection
+            boolean vpnConnected = connectVpn(originalHostname);
+            if (!vpnConnected) {
+                throw new IOException("Failed to establish VPN connection for " + originalHostname);
+            }
+
+            // Try to get the IP address from the VPN server configuration if available
+            if (machine.getVpnServer() != null && machine.getVpnServer().getDestinationNetwork() != null) {
+                String ipAddress = machine.getVpnServer().getDestinationNetwork();
+                log.info("Using VPN network address {} for connection to {}", ipAddress, originalHostname);
+                connectionTarget = ipAddress;
+            }
+        }
+
+        // Create the UNC path with the appropriate connection target
+        String uncPath = String.format("\\\\%s\\C$%s", connectionTarget, cleanPath);
+        log.info("Attempting to connect using UNC path: {}", uncPath);
+
+        // Log the network connection command that will be used (redacting password)
+        String netUseCommand = String.format("net use \\\\%s\\C$ [PASSWORD] /user:%s",
+                connectionTarget, connectionUsername);
+        log.info("Executing connection command: {}", netUseCommand);
+
+        // Build the command to connect to the remote machine with appropriate credentials
         ProcessBuilder processBuilder = new ProcessBuilder(
-                "cmd.exe", "/c", "net", "use", "\\\\" + hostname + "\\C$", password, "/user:" + username);
-
+                "cmd.exe", "/c", "net", "use", "\\\\" + connectionTarget + "\\C$", connectionPassword, "/user:" + connectionUsername);
+        processBuilder.redirectErrorStream(true);
         Process process = processBuilder.start();
 
-        try {
-            int exitCode = process.waitFor();
-            if (exitCode != 0) {
-                throw new IOException("Failed to create temporary connection to " + hostname);
+        // Capture output for debugging
+        StringBuilder output = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line).append("\n");
+                log.info("Connection output: {}", line);
             }
-            log.info("Successfully connected to hostname {}", hostname);
+        } catch (IOException e) {
+            log.warn("Error reading process output", e);
+        }
+
+        try {
+            int connectionTimeout = 20; // seconds - increase timeout for better chance of success
+            boolean completed = process.waitFor(connectionTimeout, TimeUnit.SECONDS);
+
+            if (!completed) {
+                process.destroyForcibly();
+                throw new IOException("Connection to " + connectionTarget + " timed out after " + connectionTimeout + " seconds");
+            }
+
+            int exitCode = process.exitValue();
+            if (exitCode != 0) {
+                String errorOutput = output.toString().trim();
+                log.error("Connection command failed with exit code {} and output: {}", exitCode, errorOutput);
+                throw new IOException("Failed to create temporary connection to " + connectionTarget +
+                        ". Exit code: " + exitCode + ", Output: " + errorOutput);
+            }
+            log.info("Successfully connected to hostname {} using target {}", originalHostname, connectionTarget);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Connection interrupted", e);
@@ -388,22 +453,309 @@ public class FixtureServiceImpl implements FixtureService {
         return uncPath;
     }
 
+
     private void removeConnection(String hostname) {
         try {
-            ProcessBuilder processBuilder = new ProcessBuilder(
-                    "cmd.exe", "/c", "net", "use", "\\\\" + hostname + "\\C$", "/delete", "/y");
+            // Get machine to see if it uses VPN
+            Machine machine = machineService.findByHostname(hostname);
+            String connectionTarget = hostname;
 
-            Process process = processBuilder.start();
-            int exitCode = process.waitFor();
-
-            if (exitCode != 0) {
-                log.error("Failed to remove connection to {}. Exit code: {}", hostname, exitCode);
+            // If VPN is used, see if we need to use the IP address
+            if (machine != null && machine.getVpnServer() != null &&
+                    machine.getVpnServer().getDestinationNetwork() != null) {
+                connectionTarget = machine.getVpnServer().getDestinationNetwork();
+                log.info("Using VPN network address {} for disconnecting from {}", connectionTarget, hostname);
             }
+
+            ProcessBuilder processBuilder = new ProcessBuilder(
+                    "cmd.exe", "/c", "net", "use", "\\\\" + connectionTarget + "\\C$", "/delete", "/y");
+            processBuilder.redirectErrorStream(true);
+            Process process = processBuilder.start();
+
+            // Capture output for debugging
+            StringBuilder output = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line).append("\n");
+                }
+            }
+
+            // Wait for the process to complete with a timeout
+            boolean completed = process.waitFor(10, TimeUnit.SECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+                log.error("Removing connection to {} timed out", connectionTarget);
+            } else {
+                int exitCode = process.exitValue();
+                if (exitCode != 0) {
+                    log.error("Failed to remove connection to {}. Exit code: {}, Output: {}",
+                            connectionTarget, exitCode, output.toString().trim());
+                }
+            }
+
+            // Always try to disconnect VPN, even if share disconnect failed
+            disconnectVpn(hostname);
+
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.error("Connection removal interrupted for {}", hostname, e);
         } catch (IOException e) {
             log.error("Error removing connection to {}", hostname, e);
+        }
+    }
+
+    // Check if a VPN profile with the given name exists and return its details
+    private String checkVpnProfileDetails(String vpnName) throws IOException, InterruptedException {
+        ProcessBuilder checkVpnBuilder = new ProcessBuilder(
+                "powershell.exe", "-Command",
+                "Get-VpnConnection -Name '" + vpnName + "' -ErrorAction SilentlyContinue"
+        );
+        checkVpnBuilder.redirectErrorStream(true);
+        Process checkProcess = checkVpnBuilder.start();
+
+        StringBuilder checkOutput = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(checkProcess.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                checkOutput.append(line).append("\n");
+            }
+        }
+
+        boolean checkCompleted = checkProcess.waitFor(5, TimeUnit.SECONDS);
+        String profileDetails = checkOutput.toString().trim();
+
+        log.info("VPN profile check result: {}", profileDetails);
+
+        // Return empty string if profile doesn't exist, otherwise return the details
+        if (!checkCompleted || checkProcess.exitValue() != 0 || profileDetails.isEmpty()) {
+            return "";
+        }
+        return profileDetails;
+    }
+
+
+    private boolean connectVpn(String hostname) throws IOException {
+        log.info("Checking if VPN connection is needed for hostname: {}", hostname);
+
+        // Check if the machine has a VPN connection configured
+        Machine machine = machineService.findByHostname(hostname);
+        if (machine == null) {
+            log.error("Cannot find machine with hostname: {}", hostname);
+            return false;
+        }
+
+        // Check if machine has VPN server configuration
+        VpnServer vpnServer = machine.getVpnServer();
+        if (vpnServer == null) {
+            log.debug("No VPN configuration for hostname: {}", hostname);
+            return true; // No VPN needed, continue with direct connection
+        }
+
+        String vpnName = vpnServer.getVpnName();
+        String serverAddress = vpnServer.getServerAddress();
+        String destinationNetwork = vpnServer.getDestinationNetwork();
+
+        log.info("VPN configuration found for hostname {}: server={}, network={}",
+                hostname, serverAddress, destinationNetwork);
+
+        try {
+            // Check if VPN is already connected with the correct settings
+            String profileDetails = checkVpnProfileDetails(vpnName);
+
+            // If already connected with PAP, we're good to go
+            if (profileDetails.contains("ConnectionStatus      : Connected") &&
+                    profileDetails.contains("AuthenticationMethod  : {Pap}")) {
+                log.info("VPN is already connected with PAP authentication, skipping setup");
+                return true;
+            }
+
+            // If connected but not with PAP, disconnect first
+            if (profileDetails.contains("ConnectionStatus      : Connected")) {
+                disconnectVpn(hostname);
+                // Wait for disconnection to complete
+                Thread.sleep(2000);
+            }
+
+            // If profile exists, check if it uses PAP
+            boolean needNewProfile = profileDetails.isEmpty() ||
+                    !profileDetails.contains("AuthenticationMethod  : {Pap}");
+
+            // Only recreate the profile if needed
+            if (needNewProfile) {
+                // Remove existing profile if any
+                if (!profileDetails.isEmpty()) {
+                    removeVpnProfile(vpnName);
+                    Thread.sleep(1000); // Wait a bit after removal
+                }
+
+                // Create new profile with PAP
+                createVpnProfile(vpnName, serverAddress);
+            }
+
+            // Try to connect with the VPN profile
+            return connectToVpn(vpnName);
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("VPN connection process was interrupted", e);
+            throw new IOException("VPN connection was interrupted", e);
+        }
+    }
+
+    // Remove an existing VPN profile
+    private void removeVpnProfile(String vpnName) throws IOException, InterruptedException {
+        log.info("Removing existing VPN profile: {}", vpnName);
+        ProcessBuilder removeBuilder = new ProcessBuilder(
+                "powershell.exe", "-Command",
+                "Remove-VpnConnection -Name '" + vpnName + "' -Force -ErrorAction SilentlyContinue"
+        );
+        removeBuilder.redirectErrorStream(true);
+        Process removeProcess = removeBuilder.start();
+
+        StringBuilder removeOutput = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(removeProcess.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                removeOutput.append(line).append("\n");
+            }
+        }
+
+        boolean removeCompleted = removeProcess.waitFor(10, TimeUnit.SECONDS);
+        log.info("VPN profile removal result: {}", removeOutput.toString().trim());
+    }
+
+    // Create a new VPN profile with PAP authentication
+    private void createVpnProfile(String vpnName, String serverAddress)
+            throws IOException, InterruptedException {
+
+        log.info("Creating VPN profile with PAP authentication: {}", vpnName);
+        ProcessBuilder createVpnBuilder = new ProcessBuilder(
+                "powershell.exe", "-Command",
+                "Add-VpnConnection -Name '" + vpnName + "' " +
+                        "-ServerAddress '" + serverAddress + "' " +
+                        "-TunnelType L2tp " +
+                        "-EncryptionLevel Optional " +
+                        "-RememberCredential:$false " +
+                        "-SplitTunneling " +
+                        "-L2tpPsk 'Suahwere' " +
+                        "-AuthenticationMethod Pap " +
+                        "-Force"
+        );
+        createVpnBuilder.redirectErrorStream(true);
+        Process createProcess = createVpnBuilder.start();
+
+        StringBuilder createOutput = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(createProcess.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                createOutput.append(line).append("\n");
+            }
+        }
+
+        boolean createCompleted = createProcess.waitFor(10, TimeUnit.SECONDS);
+        log.info("VPN profile creation result: {}", createOutput.toString().trim());
+
+        if (!createCompleted || createProcess.exitValue() != 0) {
+            throw new IOException("Failed to create VPN profile: " + vpnName);
+        }
+
+        log.info("VPN profile created successfully with PAP authentication: {}", vpnName);
+    }
+
+    // Try to connect to the VPN using the profile
+    private boolean connectToVpn(String vpnName) throws IOException, InterruptedException {
+        log.info("Connecting to VPN: {}", vpnName);
+        String rasdialPath = System.getenv("WINDIR") + "\\System32\\rasdial.exe";
+
+        // Try with regular username first
+        boolean connected = tryRasdialConnect(rasdialPath, vpnName, vpnUsername, vpnPassword);
+        if (connected) {
+            return true;
+        }
+
+        return false;
+    }
+
+    // Helper method to try a VPN connection with specific credentials
+    private boolean tryRasdialConnect(String rasdialPath, String vpnName, String vpnUsername, String vpnPassword)
+            throws IOException, InterruptedException {
+
+        // Log the actual username (without logging the password)
+        log.info("Attempting VPN connection with username: {}", vpnUsername);
+
+        // For security, redact password in logs but log username length for troubleshooting
+        log.debug("Password length: {}", vpnPassword != null ? vpnPassword.length() : 0);
+
+        ProcessBuilder connectBuilder = new ProcessBuilder(
+                rasdialPath, vpnName, vpnUsername, vpnPassword
+        );
+        connectBuilder.redirectErrorStream(true);
+        Process connectProcess = connectBuilder.start();
+
+        StringBuilder output = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(connectProcess.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line).append("\n");
+                log.info("RasDial output: {}", line);
+            }
+        }
+
+        boolean completed = connectProcess.waitFor(15, TimeUnit.SECONDS);
+        if (!completed) {
+            connectProcess.destroyForcibly();
+            log.error("VPN connection attempt timed out");
+            return false;
+        }
+
+        int exitCode = connectProcess.exitValue();
+        String outputStr = output.toString().trim();
+
+        if (exitCode != 0) {
+            log.error("VPN connection failed. Exit code: {}, Output: {}", exitCode, outputStr);
+            log.error("Failed credentials - Username: {}, Password: [REDACTED]", vpnUsername);
+            return false;
+        }
+
+        log.info("Successfully connected to VPN using username: {}", vpnUsername);
+        return true;
+    }
+
+    /**
+     * Disconnects from the VPN if it was established for the given hostname.
+     *
+     * @param hostname The hostname to check for VPN requirements
+     */
+    private void disconnectVpn(String hostname) {
+        try {
+            // Check if the machine has a VPN configuration
+            Machine machine = machineService.findByHostname(hostname);
+            if (machine == null || machine.getVpnServer() == null) {
+                return; // No VPN to disconnect
+            }
+
+            String vpnName = machine.getVpnServer().getVpnName();
+            log.info("Disconnecting from VPN: {}", vpnName);
+
+            // 6. Disconnect from VPN using rasdial
+            String rasdialPath = System.getenv("WINDIR") + "\\System32\\rasdial.exe";
+            ProcessBuilder disconnectBuilder = new ProcessBuilder(
+                    rasdialPath, vpnName, "/DISCONNECT"
+            );
+            Process disconnectProcess = disconnectBuilder.start();
+
+            boolean completed = disconnectProcess.waitFor(5, TimeUnit.SECONDS);
+            if (!completed) {
+                disconnectProcess.destroyForcibly();
+                log.warn("VPN disconnection timed out");
+            } else if (disconnectProcess.exitValue() != 0) {
+                log.warn("VPN disconnection returned non-zero exit code: {}", disconnectProcess.exitValue());
+            } else {
+                log.info("Successfully disconnected from VPN: {}", vpnName);
+            }
+        } catch (Exception e) {
+            log.error("Error disconnecting from VPN: {}", e.getMessage());
         }
     }
 
@@ -527,5 +879,22 @@ public class FixtureServiceImpl implements FixtureService {
                 .orElseThrow(() -> new IllegalArgumentException("Fixture with id " + fixtureId + " not found"));
         log.info("Retrieved {} machines for fixture with id {}", fixture.getMachines().size(), fixtureId);
         return fixture.getMachines();
+    }
+
+    @Transactional
+    @Override
+    public void removeFixtureFromSpecificMachine(long fixtureId, long machineId) {
+        Fixture fixture = fixtureRepository.findById(fixtureId)
+                .orElseThrow(() -> new IllegalArgumentException("Fixture with id " + fixtureId + " not found"));
+
+        Machine machine = machineRepository.findById(machineId)
+                .orElseThrow(() -> new IllegalArgumentException("Machine with id " + machineId + " not found"));
+
+        if (fixture.getMachines().contains(machine)) {
+            fixture.getMachines().remove(machine);
+            fixtureRepository.save(fixture);
+        } else {
+            throw new IllegalArgumentException("Fixture is not assigned to this machine");
+        }
     }
 }

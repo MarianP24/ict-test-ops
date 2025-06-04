@@ -137,4 +137,21 @@ public class FixtureController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
+
+    @DeleteMapping("/{fixtureId}/machines/{machineId}")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<Void> removeFixtureFromSpecificMachine(
+            @PathVariable long fixtureId,
+            @PathVariable long machineId) {
+        try {
+            fixtureService.removeFixtureFromSpecificMachine(fixtureId, machineId);
+            return ResponseEntity.ok().build();
+        } catch (IllegalArgumentException e) {
+            log.error("Failed to remove fixture {} from machine {}: {}", fixtureId, machineId, e.getMessage());
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (Exception e) {
+            log.error("Error removing fixture {} from machine {}", fixtureId, machineId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
 }
