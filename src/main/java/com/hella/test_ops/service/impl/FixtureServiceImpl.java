@@ -41,6 +41,9 @@ public class FixtureServiceImpl implements FixtureService {
     private final AppConfigReader appConfigReader;
     private final Map<Long, Map<String, Integer>> fixtureHostnameCounters = new HashMap<>(); // Fixture ID -> (Hostname -> Counter)
 
+    @Value("${vnc.viewer.path}")
+    private String vncViewerPath;
+
     @Value("${network.share.username}")
     private String username;
 
@@ -895,6 +898,138 @@ public class FixtureServiceImpl implements FixtureService {
             fixtureRepository.save(fixture);
         } else {
             throw new IllegalArgumentException("Fixture is not assigned to this machine");
+        }
+    }
+
+    /**
+     * Connects to a machine using VNC viewer
+     * @param hostname The machine hostname or IP address to connect to
+     * @throws IOException if the VNC connection fails
+     */
+    public void connectVnc(String hostname) throws IOException {
+        log.info("Attempting to connect to VNC on machine: {}", hostname);
+
+        ProcessBuilder processBuilder = new ProcessBuilder(
+                vncViewerPath,
+                "-autoreconnect", "15",
+                "-connect", hostname,
+                "-quickoption", "7"
+        );
+
+        try {
+            Process process = processBuilder.start();
+            log.info("VNC connection initiated to {}, process: {}", hostname, process.pid());
+        } catch (IOException e) {
+            log.error("Failed to start VNC connection to {}: {}", hostname, e.getMessage());
+            throw new IOException("Failed to connect to VNC on " + hostname, e);
+        }
+    }
+
+    /**
+     * Connects to C$ drive on a remote machine
+     * @param hostname The machine hostname or IP address
+     * @throws IOException if the connection fails
+     */
+    public void connectToCDrive(String hostname) throws IOException {
+        log.info("Attempting to connect to C$ drive on machine: {}", hostname);
+
+        String targetPath = "\\\\" + hostname + "\\C$";
+
+        // First establish the network connection
+        ProcessBuilder netUseBuilder = new ProcessBuilder(
+                "cmd.exe", "/c", "net", "use",
+                targetPath,
+                password,
+                "/user:" + username
+        );
+        netUseBuilder.redirectErrorStream(true);
+
+        try {
+            Process netUseProcess = netUseBuilder.start();
+            boolean completed = netUseProcess.waitFor(30, TimeUnit.SECONDS);
+
+            if (!completed) {
+                netUseProcess.destroyForcibly();
+                throw new IOException("Network connection to " + targetPath + " timed out");
+            }
+
+            int exitCode = netUseProcess.exitValue();
+            if (exitCode != 0) {
+                // Read error output
+                StringBuilder errorOutput = new StringBuilder();
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(netUseProcess.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        errorOutput.append(line).append("\n");
+                    }
+                }
+                log.error("Failed to connect to C$ drive on {}: {}", hostname, errorOutput.toString());
+                throw new IOException("Failed to establish network connection to " + targetPath);
+            }
+
+            // Open the drive in Windows Explorer
+            ProcessBuilder explorerBuilder = new ProcessBuilder("explorer.exe", targetPath);
+            Process explorerProcess = explorerBuilder.start();
+
+            log.info("Successfully connected and opened C$ drive on {}", hostname);
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Connection to C$ drive was interrupted", e);
+        }
+    }
+
+    /**
+     * Connects to D$ drive on a remote machine
+     * @param hostname The machine hostname or IP address
+     * @throws IOException if the connection fails
+     */
+    public void connectToDDrive(String hostname) throws IOException {
+        log.info("Attempting to connect to D$ drive on machine: {}", hostname);
+
+        String targetPath = "\\\\" + hostname + "\\D$";
+
+        // First establish the network connection
+        ProcessBuilder netUseBuilder = new ProcessBuilder(
+                "cmd.exe", "/c", "net", "use",
+                targetPath,
+                password,
+                "/user:" + username
+        );
+        netUseBuilder.redirectErrorStream(true);
+
+        try {
+            Process netUseProcess = netUseBuilder.start();
+            boolean completed = netUseProcess.waitFor(30, TimeUnit.SECONDS);
+
+            if (!completed) {
+                netUseProcess.destroyForcibly();
+                throw new IOException("Network connection to " + targetPath + " timed out");
+            }
+
+            int exitCode = netUseProcess.exitValue();
+            if (exitCode != 0) {
+                // Read error output
+                StringBuilder errorOutput = new StringBuilder();
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(netUseProcess.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        errorOutput.append(line).append("\n");
+                    }
+                }
+                log.error("Failed to connect to D$ drive on {}: {}", hostname, errorOutput.toString());
+                throw new IOException("Failed to establish network connection to " + targetPath);
+            }
+
+            // Open the drive in Windows Explorer
+            ProcessBuilder explorerBuilder = new ProcessBuilder("explorer.exe", targetPath);
+            Process explorerProcess = explorerBuilder.start();
+
+            log.info("Successfully connected and opened D$ drive on {}", hostname);
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Connection to D$ drive was interrupted", e);
         }
     }
 }

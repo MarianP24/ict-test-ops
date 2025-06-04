@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Set;
 
@@ -152,6 +153,45 @@ public class FixtureController {
         } catch (Exception e) {
             log.error("Error removing fixture {} from machine {}", fixtureId, machineId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @PostMapping("/vnc/{hostname}")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<String> connectVnc(@PathVariable String hostname) {
+        try {
+            fixtureService.connectVnc(hostname);
+            return ResponseEntity.ok("VNC connection initiated to " + hostname);
+        } catch (IOException e) {
+            log.error("Failed to connect VNC to {}: {}", hostname, e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Failed to connect VNC to " + hostname + ": " + e.getMessage());
+        }
+    }
+
+    @PostMapping("/connect-c-drive/{hostname}")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<String> connectToCDrive(@PathVariable String hostname) {
+        try {
+            fixtureService.connectToCDrive(hostname);
+            return ResponseEntity.ok("Successfully connected to C$ drive on " + hostname);
+        } catch (IOException e) {
+            log.error("Failed to connect to C$ drive on {}: {}", hostname, e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Failed to connect to C$ drive on " + hostname + ": " + e.getMessage());
+        }
+    }
+
+    @PostMapping("/connect-d-drive/{hostname}")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<String> connectToDDrive(@PathVariable String hostname) {
+        try {
+            fixtureService.connectToDDrive(hostname);
+            return ResponseEntity.ok("Successfully connected to D$ drive on " + hostname);
+        } catch (IOException e) {
+            log.error("Failed to connect to D$ drive on {}: {}", hostname, e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Failed to connect to D$ drive on " + hostname + ": " + e.getMessage());
         }
     }
 }
