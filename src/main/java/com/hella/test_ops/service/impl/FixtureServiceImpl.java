@@ -417,12 +417,103 @@ public class FixtureServiceImpl implements FixtureService {
         String uncPath = String.format("\\\\%s\\C$%s", connectionTarget, cleanPath);
         log.info("Attempting to connect using UNC path: {}", uncPath);
 
-        // Log the network connection command that will be used (redacting password)
-        String netUseCommand = String.format("net use \\\\%s\\C$ [PASSWORD] /user:%s",
-                connectionTarget, connectionUsername);
-        log.info("Executing connection command: {}", netUseCommand);
+        // Use runas /netonly to create separate credential context for VPN scenarios
+        if (requiresVpn) {
+            return createConnectionWithRunAsNetOnly(connectionTarget, connectionUsername, connectionPassword, uncPath);
+        } else {
+            // For non-VPN connections, use the simpler approach
+            return createDirectConnection(connectionTarget, connectionUsername, connectionPassword, uncPath);
+        }
+    }
 
-        // Execute the actual connection command
+    // Method for VPN connections using runas /netonly
+    private String createConnectionWithRunAsNetOnly(String connectionTarget, String connectionUsername,
+                                                    String connectionPassword, String uncPath) throws IOException {
+
+        log.info("Using runas /netonly to create separate credential context for VPN connection");
+
+        // Create a temporary batch file to handle the credentials securely
+        String tempDir = System.getProperty("java.io.tmpdir");
+        String batchFileName = "temp_connect_" + System.currentTimeMillis() + ".bat";
+        Path batchFile = Paths.get(tempDir, batchFileName);
+
+        try {
+            // Create batch file content
+            String batchContent = String.format(
+                    "@echo off\n" +
+                            "net use \"\\\\%s\\C$\" \"%s\" /user:\"%s\" /persistent:no\n" +
+                            "echo Connection completed with exit code %%ERRORLEVEL%%\n",
+                    connectionTarget, connectionPassword, connectionUsername
+            );
+
+            Files.write(batchFile, batchContent.getBytes());
+
+            log.info("Executing connection with separate credential context for user: {}", connectionUsername);
+
+            // Execute using runas /netonly
+            ProcessBuilder processBuilder = new ProcessBuilder(
+                    "runas",
+                    "/netonly",
+                    "/user:" + connectionUsername,
+                    "cmd.exe /c \"" + batchFile.toString() + "\""
+            );
+
+            processBuilder.redirectErrorStream(true);
+            Process process = processBuilder.start();
+
+            // Provide password to runas
+            try (PrintWriter writer = new PrintWriter(process.getOutputStream())) {
+                writer.println(connectionPassword);
+                writer.flush();
+            }
+
+            StringBuilder output = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line).append("\n");
+                    log.info("RunAs output: {}", line);
+                }
+            }
+
+            try {
+                boolean finished = process.waitFor(45, TimeUnit.SECONDS);
+                if (!finished) {
+                    process.destroyForcibly();
+                    throw new IOException("RunAs connection command timed out after 45 seconds");
+                }
+
+                int exitCode = process.exitValue();
+                if (exitCode != 0) {
+                    throw new IOException(String.format(
+                            "Failed to create connection to %s using RunAs. Exit code: %d, Output: %s",
+                            connectionTarget, exitCode, output.toString().trim()));
+                }
+
+                log.info("Successfully connected to {} using RunAs /netonly", connectionTarget);
+                return uncPath;
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("RunAs connection process was interrupted", e);
+            }
+
+        } finally {
+            // Clean up temporary batch file
+            try {
+                Files.deleteIfExists(batchFile);
+            } catch (IOException e) {
+                log.warn("Could not delete temporary batch file: {}", batchFile, e);
+            }
+        }
+    }
+
+    // Method for direct connections (non-VPN)
+    private String createDirectConnection(String connectionTarget, String connectionUsername,
+                                          String connectionPassword, String uncPath) throws IOException {
+
+        log.info("Creating direct connection for user: {}", connectionUsername);
+
         ProcessBuilder processBuilder = new ProcessBuilder(
                 "net", "use", String.format("\\\\%s\\C$", connectionTarget),
                 connectionPassword, "/user:" + connectionUsername
