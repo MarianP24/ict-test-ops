@@ -56,6 +56,9 @@ public class FixtureServiceImpl implements FixtureService {
     @Value("${network.share.vpnPassword}")
     private String vpnPassword;
 
+    @Value("${machine.access.password}")
+    private String machineAccessPassword;
+
     public FixtureServiceImpl(FixtureRepository fixtureRepository, MachineRepository machineRepository, MachineService machineService, AppConfigReader appConfigReader) {
         this.fixtureRepository = fixtureRepository;
         this.machineRepository = machineRepository;
@@ -377,32 +380,25 @@ public class FixtureServiceImpl implements FixtureService {
             log.info("Ignoring equipment of type: {}", equipmentType);
         }
 
-        // Store the connection target (will be modified if VPN is needed)
+        // Store the connection target (hostname)
         String connectionTarget = originalHostname;
         String cleanPath = configPath.replace("C:", "");
 
         // Determine if this machine requires VPN connection
         boolean requiresVpn = machine.getVpnServer() != null;
 
-        // Use VPN credentials if VPN is required, otherwise use regular credentials
-        String connectionUsername = requiresVpn ? vpnUsername : username;
-        String connectionPassword = requiresVpn ? vpnPassword : password;
-
-        // Connect to VPN first if needed
+        // Connect to VPN first if needed (using VPN credentials)
         if (requiresVpn) {
-            // Use the original hostname for VPN connection
+            // Use the original hostname for VPN connection with vpnUsername/vpnPassword
             boolean vpnConnected = connectVpn(originalHostname);
             if (!vpnConnected) {
                 throw new IOException("Failed to establish VPN connection for " + originalHostname);
             }
-
-            // Try to get the IP address from the VPN server configuration if available
-            if (machine.getVpnServer() != null && machine.getVpnServer().getDestinationNetwork() != null) {
-                String ipAddress = machine.getVpnServer().getDestinationNetwork();
-                log.info("Using VPN network address {} for connection to {}", ipAddress, originalHostname);
-                connectionTarget = ipAddress;
-            }
         }
+
+        // For network share access, ALWAYS use machine-specific credentials
+        String connectionUsername = machine.getMachineUsername();
+        String connectionPassword = machineAccessPassword;
 
         // Create the UNC path with the appropriate connection target
         String uncPath = String.format("\\\\%s\\C$%s", connectionTarget, cleanPath);
@@ -640,9 +636,10 @@ public class FixtureServiceImpl implements FixtureService {
                         "-TunnelType L2tp " +
                         "-EncryptionLevel Optional " +
                         "-RememberCredential:$false " +
-                        "-SplitTunneling " +
+                        "-SplitTunneling:$false " +
                         "-L2tpPsk 'Suahwere' " +
                         "-AuthenticationMethod Pap " +
+                        "-UseWinlogonCredential:$false " +
                         "-Force"
         );
         createVpnBuilder.redirectErrorStream(true);

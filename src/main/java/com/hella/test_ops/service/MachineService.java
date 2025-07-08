@@ -36,7 +36,8 @@ public interface MachineService {
             Integer internalFactory,
             String serialNumber,
             String equipmentType,
-            String hostname
+            String hostname,
+            String machineUsername
     );
 
     void assignVpnServer(long machineId, long vpnServerId);

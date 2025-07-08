@@ -67,6 +67,7 @@ public class MachineServiceImpl implements MachineService {
         oldMachine.setSerialNumber(machineDTO.serialNumber());
         oldMachine.setEquipmentType(machineDTO.equipmentType());
         oldMachine.setHostname(machineDTO.hostname());
+        oldMachine.setMachineUsername(machineDTO.machineUsername());
         machineRepository.save(oldMachine);
         log.info("Machine {} has been updated", machineDTO.equipmentName());
     }
@@ -108,7 +109,8 @@ public class MachineServiceImpl implements MachineService {
             Integer internalFactory,
             String serialNumber,
             String equipmentType,
-            String hostname) {
+            String hostname,
+            String machineUsername) {
 
         List<Machine> filteredMachines = machineRepository.findAll(
                 MachineSpecification.withFilters(
@@ -116,7 +118,8 @@ public class MachineServiceImpl implements MachineService {
                         internalFactory,
                         serialNumber,
                         equipmentType,
-                        hostname
+                        hostname,
+                        machineUsername
                 )
         );
 

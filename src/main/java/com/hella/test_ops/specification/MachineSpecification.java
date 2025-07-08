@@ -51,18 +51,29 @@ public final class MachineSpecification {
                         );
     }
 
+    public static Specification<Machine> hasMachineUsernameLike(String machineUsername) {
+        return (root, query, criteriaBuilder) ->
+                machineUsername == null ? criteriaBuilder.conjunction() :
+                        criteriaBuilder.like(
+                                criteriaBuilder.lower(root.get("machineUsername")),
+                                "%" + machineUsername.toLowerCase() + "%"
+                        );
+    }
+
     public static Specification<Machine> withFilters(
             String equipmentName,
             Integer internalFactory,
             String serialNumber,
             String equipmentType,
-            String hostname) {
+            String hostname,
+            String machineUsername) {
 
         return Specification
                 .where(hasEquipmentNameLike(equipmentName))
                 .and(hasInternalFactory(internalFactory))
                 .and(hasSerialNumberLike(serialNumber))
                 .and(hasEquipmentTypeLike(equipmentType))
-                .and(hasHostnameLike(hostname));
+                .and(hasHostnameLike(hostname))
+                .and(hasMachineUsernameLike(machineUsername));
     }
 }

@@ -69,10 +69,12 @@ public class MachineController {
             @RequestParam(required = false) Integer internalFactory,
             @RequestParam(required = false) String serialNumber,
             @RequestParam(required = false) String equipmentType,
-            @RequestParam(required = false) String hostname) {
+            @RequestParam(required = false) String hostname,
+            @RequestParam(required = false) String machineUsername) {
+
 
         List<MachineDTO> filteredMachines = machineService.findByFilters(
-                equipmentName, internalFactory, serialNumber, equipmentType, hostname);
+                equipmentName, internalFactory, serialNumber, equipmentType, hostname, machineUsername);
 
         return ResponseEntity.ok(filteredMachines);
     }

@@ -31,6 +31,9 @@ public class Machine {
     @Column
     private String hostname;
 
+    @Column(name = "machine_username")
+    private String machineUsername;
+
     @ManyToOne
     @JoinColumn(name = "vpn_server_id")
     private VpnServer vpnServer;
