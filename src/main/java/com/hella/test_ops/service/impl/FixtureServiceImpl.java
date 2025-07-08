@@ -380,19 +380,32 @@ public class FixtureServiceImpl implements FixtureService {
             log.info("Ignoring equipment of type: {}", equipmentType);
         }
 
-        // Store the connection target (hostname)
-        String connectionTarget = originalHostname;
         String cleanPath = configPath.replace("C:", "");
 
         // Determine if this machine requires VPN connection
         boolean requiresVpn = machine.getVpnServer() != null;
 
-        // Connect to VPN first if needed (using VPN credentials)
+        // Determine the connection target (hostname or IP)
+        String connectionTarget = originalHostname;
+
+        // Connect to VPN first if needed
         if (requiresVpn) {
-            // Use the original hostname for VPN connection with vpnUsername/vpnPassword
             boolean vpnConnected = connectVpn(originalHostname);
             if (!vpnConnected) {
                 throw new IOException("Failed to establish VPN connection for " + originalHostname);
+            }
+
+            // When VPN is used, try to use an IP from the destination network instead of hostname
+            VpnServer vpnServer = machine.getVpnServer();
+            String destinationNetwork = vpnServer.getDestinationNetwork();
+
+            if (destinationNetwork != null && destinationNetwork.contains("/")) {
+                String targetIp = getTargetIpFromNetwork(destinationNetwork, originalHostname);
+                if (targetIp != null) {
+                    connectionTarget = targetIp;
+                    log.info("Using IP address {} instead of hostname {} for VPN connection",
+                            targetIp, originalHostname);
+                }
             }
         }
 
@@ -409,13 +422,14 @@ public class FixtureServiceImpl implements FixtureService {
                 connectionTarget, connectionUsername);
         log.info("Executing connection command: {}", netUseCommand);
 
-        // Build the command to connect to the remote machine with appropriate credentials
+        // Execute the actual connection command
         ProcessBuilder processBuilder = new ProcessBuilder(
-                "cmd.exe", "/c", "net", "use", "\\\\" + connectionTarget + "\\C$", connectionPassword, "/user:" + connectionUsername);
+                "net", "use", String.format("\\\\%s\\C$", connectionTarget),
+                connectionPassword, "/user:" + connectionUsername
+        );
         processBuilder.redirectErrorStream(true);
         Process process = processBuilder.start();
 
-        // Capture output for debugging
         StringBuilder output = new StringBuilder();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
@@ -423,35 +437,67 @@ public class FixtureServiceImpl implements FixtureService {
                 output.append(line).append("\n");
                 log.info("Connection output: {}", line);
             }
-        } catch (IOException e) {
-            log.warn("Error reading process output", e);
         }
 
         try {
-            int connectionTimeout = 20; // seconds - increase timeout for better chance of success
-            boolean completed = process.waitFor(connectionTimeout, TimeUnit.SECONDS);
-
-            if (!completed) {
+            boolean finished = process.waitFor(30, TimeUnit.SECONDS);
+            if (!finished) {
                 process.destroyForcibly();
-                throw new IOException("Connection to " + connectionTarget + " timed out after " + connectionTimeout + " seconds");
+                throw new IOException("Connection command timed out after 30 seconds");
             }
 
             int exitCode = process.exitValue();
             if (exitCode != 0) {
-                String errorOutput = output.toString().trim();
-                log.error("Connection command failed with exit code {} and output: {}", exitCode, errorOutput);
-                throw new IOException("Failed to create temporary connection to " + connectionTarget +
-                        ". Exit code: " + exitCode + ", Output: " + errorOutput);
+                throw new IOException(String.format(
+                        "Failed to create temporary connection to %s. Exit code: %d, Output: %s",
+                        connectionTarget, exitCode, output.toString().trim()));
             }
-            log.info("Successfully connected to hostname {} using target {}", originalHostname, connectionTarget);
+
+            log.info("Successfully connected to {}", connectionTarget);
+            return uncPath;
+
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IOException("Connection interrupted", e);
+            throw new IOException("Connection process was interrupted", e);
         }
-
-        return uncPath;
     }
 
+    // Helper method to get a target IP from the destination network
+    private String getTargetIpFromNetwork(String destinationNetwork, String originalHostname) {
+        try {
+            // Parse the destination network (e.g., "10.169.5.128/26")
+            String[] parts = destinationNetwork.split("/");
+            String networkAddress = parts[0];
+            int cidr = Integer.parseInt(parts[1]);
+
+            // For a /26 network like 10.169.5.128/26, the range is 10.169.5.129 - 10.169.5.190
+            // Let's try to map the hostname to a specific IP within this range
+
+            // Simple approach: use the first usable IP in the range
+            String[] octets = networkAddress.split("\\.");
+            int lastOctet = Integer.parseInt(octets[3]);
+
+            // For /26, we have 64 addresses, but first and last are network/broadcast
+            // So usable range is network+1 to network+62
+            int firstUsableIp = lastOctet + 1;
+
+            // You could implement more sophisticated mapping here based on hostname
+            // For now, let's try a few common IPs in the range
+            String baseNetwork = octets[0] + "." + octets[1] + "." + octets[2] + ".";
+
+            // Try the first few usable IPs in the range
+            String targetIp = baseNetwork + firstUsableIp;
+
+            log.info("Calculated target IP {} from network {} for hostname {}",
+                    targetIp, destinationNetwork, originalHostname);
+
+            return targetIp;
+
+        } catch (Exception e) {
+            log.warn("Failed to calculate target IP from network {}: {}", destinationNetwork, e.getMessage());
+            return null;
+        }
+    }
 
     private void removeConnection(String hostname) {
         try {
@@ -562,10 +608,11 @@ public class FixtureServiceImpl implements FixtureService {
             // Check if VPN is already connected with the correct settings
             String profileDetails = checkVpnProfileDetails(vpnName);
 
-            // If already connected with PAP, we're good to go
+            // If already connected with PAP, check and add routing if needed
             if (profileDetails.contains("ConnectionStatus      : Connected") &&
                     profileDetails.contains("AuthenticationMethod  : {Pap}")) {
-                log.info("VPN is already connected with PAP authentication, skipping setup");
+                log.info("VPN is already connected with PAP authentication, checking routing");
+                addRouteForDestinationNetwork(vpnName, destinationNetwork);
                 return true;
             }
 
@@ -593,12 +640,88 @@ public class FixtureServiceImpl implements FixtureService {
             }
 
             // Try to connect with the VPN profile
-            return connectToVpn(vpnName);
+            boolean connected = connectToVpn(vpnName);
+
+            // Add routing after successful connection
+            if (connected) {
+                Thread.sleep(3000); // Wait for VPN to stabilize
+                addRouteForDestinationNetwork(vpnName, destinationNetwork);
+            }
+
+            return connected;
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.error("VPN connection process was interrupted", e);
             throw new IOException("VPN connection was interrupted", e);
+        }
+    }
+
+    // Add this new method to handle routing
+    private void addRouteForDestinationNetwork(String vpnName, String destinationNetwork) {
+        if (destinationNetwork == null || !destinationNetwork.contains("/")) {
+            log.warn("Invalid destination network format: {}", destinationNetwork);
+            return;
+        }
+
+        try {
+            log.info("Adding route for network: {} through VPN: {}", destinationNetwork, vpnName);
+
+            // Use PowerShell New-NetRoute which might not require explicit elevation
+            String powerShellCommand = String.format(
+                    "New-NetRoute -DestinationPrefix '%s' -InterfaceAlias '%s' -PolicyStore ActiveStore -ErrorAction SilentlyContinue",
+                    destinationNetwork, vpnName
+            );
+
+            ProcessBuilder addRouteBuilder = new ProcessBuilder("powershell.exe", "-Command", powerShellCommand);
+            Process addRouteProcess = addRouteBuilder.start();
+
+            String routeOutput = new String(addRouteProcess.getInputStream().readAllBytes());
+            String errorOutput = new String(addRouteProcess.getErrorStream().readAllBytes());
+
+            int exitCode = addRouteProcess.waitFor();
+            if (exitCode == 0) {
+                log.info("Successfully added route for {} through VPN {}: {}",
+                        destinationNetwork, vpnName, routeOutput.trim());
+            } else {
+                log.warn("Failed to add route. Exit code: {}, Output: {}, Error: {}",
+                        exitCode, routeOutput.trim(), errorOutput.trim());
+
+                // Fallback: Try to add the route using Add-VpnConnectionRoute
+                tryAddVpnConnectionRoute(vpnName, destinationNetwork);
+            }
+
+        } catch (Exception e) {
+            log.error("Error adding route for destination network {}: {}", destinationNetwork, e.getMessage());
+        }
+    }
+
+    // Fallback method using VPN-specific route addition
+    private void tryAddVpnConnectionRoute(String vpnName, String destinationNetwork) {
+        try {
+            log.info("Trying VPN connection route method for {}", destinationNetwork);
+
+            String powerShellCommand = String.format(
+                    "Add-VpnConnectionRoute -ConnectionName '%s' -DestinationPrefix '%s' -ErrorAction SilentlyContinue",
+                    vpnName, destinationNetwork
+            );
+
+            ProcessBuilder addVpnRouteBuilder = new ProcessBuilder("powershell.exe", "-Command", powerShellCommand);
+            Process addVpnRouteProcess = addVpnRouteBuilder.start();
+
+            String vpnRouteOutput = new String(addVpnRouteProcess.getInputStream().readAllBytes());
+            String vpnErrorOutput = new String(addVpnRouteProcess.getErrorStream().readAllBytes());
+
+            int vpnExitCode = addVpnRouteProcess.waitFor();
+            if (vpnExitCode == 0) {
+                log.info("Successfully added VPN route for {}: {}", destinationNetwork, vpnRouteOutput.trim());
+            } else {
+                log.warn("VPN route addition also failed. Exit code: {}, Output: {}, Error: {}",
+                        vpnExitCode, vpnRouteOutput.trim(), vpnErrorOutput.trim());
+            }
+
+        } catch (Exception e) {
+            log.error("Error with VPN route fallback: {}", e.getMessage());
         }
     }
 
