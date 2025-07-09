@@ -241,7 +241,7 @@ public class FixtureServiceImpl implements FixtureService {
     /**
      * Creates a maintenance report for a single fixture by processing it on all machines
      * it's connected to.
-     * 
+     *
      *
      * @param fixtureId The ID of the fixture to process
      * @return A summary of the processing result
@@ -339,7 +339,7 @@ public class FixtureServiceImpl implements FixtureService {
 
     /**
      * Checks if a machine is marked as unavailable
-    */
+     */
     private boolean isMachineUnavailable(String hostname) {
         return unavailableMachines.contains(hostname);
     }
