@@ -60,9 +60,11 @@ public class WebSecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(Arrays.asList(
-                "http://localhost:3000",
-                "http://10.169.6.39:3000",  // Add your frontend URL here
-                "http://other-frontend-domain"  // Add any other domains as needed
+                "http://localhost:3000",           // Local development
+                "http://127.0.0.1:3000",          // Alternative localhost
+                "http://172.21.80.1:3000",        // Your network IP - ADD THIS!
+                "http://10.169.6.39:3000"         // If frontend runs on backend IP
+
         ));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("Authorization", "Cache-Control", "Content-Type"));

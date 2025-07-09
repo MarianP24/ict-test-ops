@@ -23,10 +23,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 
@@ -58,6 +55,8 @@ public class FixtureServiceImpl implements FixtureService {
 
     @Value("${machine.access.password}")
     private String machineAccessPassword;
+
+    private final Set<String> unavailableMachines = ConcurrentHashMap.newKeySet();
 
     public FixtureServiceImpl(FixtureRepository fixtureRepository, MachineRepository machineRepository, MachineService machineService, AppConfigReader appConfigReader) {
         this.fixtureRepository = fixtureRepository;
@@ -285,6 +284,21 @@ public class FixtureServiceImpl implements FixtureService {
                 hostCount == 1 ? "" : "s");
     }
 
+    /**
+     * Checks if a machine is marked as unavailable
+    */
+    private boolean isMachineUnavailable(String hostname) {
+        return unavailableMachines.contains(hostname);
+    }
+
+    /**
+     * Marks a machine as unavailable
+     */
+    private void markMachineUnavailable(String hostname) {
+        unavailableMachines.add(hostname);
+        log.warn("Machine {} marked as unavailable", hostname);
+    }
+
     private void processHostnameFixtures(String hostname, List<Fixture> fixtures) {
         log.info("Starting to process {} fixtures for hostname {}", fixtures.size(), hostname);
         try {
@@ -296,14 +310,14 @@ public class FixtureServiceImpl implements FixtureService {
             log.info("Completed processing all fixtures for hostname {}", hostname);
         } catch (IOException e) {
             log.error("Unable to process fixtures for hostname {}: {}. Skipping this host.",
-                    hostname, e.getMessage(), e);
+                    hostname, e.getMessage());
         } finally {
             try {
                 removeConnection(hostname);
                 log.info("Successfully removed connection to hostname {}", hostname);
             } catch (Exception e) {
                 log.error("Failed to remove connection to {}: {}. Continuing execution.",
-                        hostname, e.getMessage(), e);
+                        hostname, e.getMessage());
             }
         }
     }
@@ -338,27 +352,92 @@ public class FixtureServiceImpl implements FixtureService {
                     .sum();
 
             if (newTotal >= fixture.getFixtureCounterSet()) {
-                try {
-                    // Reset all contributing counters
-                    for (Map.Entry<String, Integer> entry : hostnameCounters.entrySet()) {
-                        String contributingHostname = entry.getKey();
+                log.info("Total counter limit reached for fixture {}. Attempting to reset counters on reachable hosts only.", fixture.getFileName());
+
+                // Reset counters only on reachable machines - skip unreachable ones
+                List<String> successfulResets = new ArrayList<>();
+                List<String> skippedMachines = new ArrayList<>();
+
+                for (Map.Entry<String, Integer> entry : hostnameCounters.entrySet()) {
+                    String contributingHostname = entry.getKey();
+
+                    // Skip if machine is known to be unavailable
+                    if (isMachineUnavailable(contributingHostname)) {
+                        skippedMachines.add(contributingHostname);
+                        log.info("Skipping counter reset for fixture {} on hostname {} - machine is unavailable",
+                                fixture.getFileName(), contributingHostname);
+                        continue;
+                    }
+
+                    try {
                         String hostUncPath = createTemporaryConnection(contributingHostname);
                         resetCounter(fixture.getFileName(),
                                 hostUncPath + "\\" + fixture.getFileName(),
                                 contributingHostname);
+                        successfulResets.add(contributingHostname);
                         log.info("Counter reset for fixture {} on hostname {} due to total limit",
                                 fixture.getFileName(), contributingHostname);
+                    } catch (IOException e) {
+                        // Mark machine as unavailable and skip it
+                        markMachineUnavailable(contributingHostname);
+                        skippedMachines.add(contributingHostname);
+                        log.warn("Skipping counter reset for fixture {} on hostname {} - machine became unreachable: {}",
+                                fixture.getFileName(), contributingHostname, e.getMessage());
                     }
-                    hostnameCounters.clear();
-                    fixture.setCounter(0);
-                    fixtureRepository.save(fixture);
-                } catch (Exception e) {
-                    log.error("Error processing fixture counters reset", e);
                 }
+
+                // Log summary of reset operations
+                if (!successfulResets.isEmpty()) {
+                    log.info("Successfully reset counters for fixture {} on hosts: {}",
+                            fixture.getFileName(), successfulResets);
+                }
+                if (!skippedMachines.isEmpty()) {
+                    log.info("Skipped counter reset for fixture {} on unavailable hosts: {}",
+                            fixture.getFileName(), skippedMachines);
+                }
+
+                // Clear the counters map and update database regardless of skipped machines
+                hostnameCounters.clear();
+                fixture.setCounter(0);
+                fixtureRepository.save(fixture);
+
+                log.info("Fixture {} counter reset completed. Reset on {}/{} reachable hosts, skipped {} unavailable hosts.",
+                        fixture.getFileName(), successfulResets.size(),
+                        successfulResets.size() + skippedMachines.size(), skippedMachines.size());
+
             } else {
                 fixture.setCounter(newTotal);
                 fixtureRepository.save(fixture);
             }
+        }
+    }
+
+
+    /**
+     * Checks if a host is reachable before attempting connection
+     * @param hostname The hostname to check
+     * @return true if the host is reachable, false otherwise
+     */
+    private boolean isHostReachable(String hostname) {
+        try {
+            // Try to ping the host with a 5-second timeout
+            ProcessBuilder pingBuilder = new ProcessBuilder("ping", "-n", "1", "-w", "5000", hostname);
+            pingBuilder.redirectErrorStream(true);
+            Process pingProcess = pingBuilder.start();
+
+            boolean finished = pingProcess.waitFor(10, TimeUnit.SECONDS);
+            if (!finished) {
+                pingProcess.destroyForcibly();
+                return false;
+            }
+
+            int exitCode = pingProcess.exitValue();
+            log.info("Ping result for {}: exit code {}", hostname, exitCode);
+            return exitCode == 0;
+
+        } catch (Exception e) {
+            log.warn("Failed to ping host {}: {}", hostname, e.getMessage());
+            return false;
         }
     }
 
@@ -514,6 +593,11 @@ public class FixtureServiceImpl implements FixtureService {
 
         log.info("Creating direct connection for user: {}", connectionUsername);
 
+        // Check if host is reachable first
+        if (!isHostReachable(connectionTarget)) {
+            throw new IOException(String.format("Host %s is not reachable (machine may be shut down or network issue)", connectionTarget));
+        }
+
         ProcessBuilder processBuilder = new ProcessBuilder(
                 "net", "use", String.format("\\\\%s\\C$", connectionTarget),
                 connectionPassword, "/user:" + connectionUsername
@@ -539,13 +623,25 @@ public class FixtureServiceImpl implements FixtureService {
 
             int exitCode = process.exitValue();
             if (exitCode != 0) {
+                String errorOutput = output.toString().trim();
+
+                // Check for specific network errors
+                if (errorOutput.contains("System error 53") || errorOutput.contains("network path was not found")) {
+                    throw new IOException(String.format("Host %s is unreachable (machine may be shut down). Error: %s", connectionTarget, errorOutput));
+                } else if (errorOutput.contains("System error 5") || errorOutput.contains("Access is denied")) {
+                    throw new IOException(String.format("Access denied to %s. Check credentials. Error: %s", connectionTarget, errorOutput));
+                } else if (errorOutput.contains("System error 1326")) {
+                    throw new IOException(String.format("Authentication failed for %s. Check username/password. Error: %s", connectionTarget, errorOutput));
+                }
+
                 throw new IOException(String.format(
                         "Failed to create temporary connection to %s. Exit code: %d, Output: %s",
-                        connectionTarget, exitCode, output.toString().trim()));
+                        connectionTarget, exitCode, errorOutput));
             }
 
             log.info("Successfully connected to {}", connectionTarget);
             return uncPath;
+
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -594,6 +690,20 @@ public class FixtureServiceImpl implements FixtureService {
         try {
             // Get machine to see if it uses VPN
             Machine machine = machineService.findByHostname(hostname);
+            boolean hasVpn = machine != null && machine.getVpnServer() != null;
+
+            // Check if host is reachable before attempting to remove connection
+            if (!isHostReachable(hostname)) {
+                log.info("Skipping network connection removal for unreachable host: {}", hostname);
+
+                // But still try to disconnect VPN if it was used
+                if (hasVpn) {
+                    disconnectVpn(hostname);
+                }
+                return;
+            }
+
+            // Get machine to see if it uses VPN
             String connectionTarget = hostname;
 
             // If VPN is used, see if we need to use the IP address
