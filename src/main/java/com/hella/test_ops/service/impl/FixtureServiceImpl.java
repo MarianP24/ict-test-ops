@@ -201,12 +201,39 @@ public class FixtureServiceImpl implements FixtureService {
         fixturesByHostname.forEach((hostname, fixtureList) ->
                 log.info("Hostname: {} has {} fixtures", hostname, fixtureList.size()));
 
-        List<CompletableFuture<Void>> futures = fixturesByHostname.entrySet().stream()
+        // Separate VPN and non-VPN machines
+        Map<String, List<Fixture>> nonVpnMachines = new HashMap<>();
+        Map<String, List<Fixture>> vpnMachines = new HashMap<>();
+
+        fixturesByHostname.forEach((hostname, fixtureList) -> {
+            Machine machine = machineRepository.findByHostname(hostname);
+            if (machine != null && machine.getVpnServer() != null) {
+                vpnMachines.put(hostname, fixtureList);
+            } else {
+                nonVpnMachines.put(hostname, fixtureList);
+            }
+        });
+
+        log.info("Processing {} non-VPN machines in parallel", nonVpnMachines.size());
+        log.info("Processing {} VPN machines sequentially", vpnMachines.size());
+
+        // Process non-VPN machines in parallel first
+        List<CompletableFuture<Void>> nonVpnFutures = nonVpnMachines.entrySet().stream()
                 .map(entry -> CompletableFuture.runAsync(() ->
                         processHostnameFixtures(entry.getKey(), entry.getValue()), executorService))
                 .toList();
 
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        if (!nonVpnFutures.isEmpty()) {
+            CompletableFuture.allOf(nonVpnFutures.toArray(new CompletableFuture[0])).join();
+            log.info("Completed processing all non-VPN machines");
+        }
+
+        // Process VPN machines sequentially (one at a time)
+        for (Map.Entry<String, List<Fixture>> vpnEntry : vpnMachines.entrySet()) {
+            log.info("Processing VPN machine: {}", vpnEntry.getKey());
+            processHostnameFixtures(vpnEntry.getKey(), vpnEntry.getValue());
+            log.info("Completed processing VPN machine: {}", vpnEntry.getKey());
+        }
 
         log.info("Maintenance report has been concluded for all fixtures with valid hostnames");
     }
@@ -214,6 +241,7 @@ public class FixtureServiceImpl implements FixtureService {
     /**
      * Creates a maintenance report for a single fixture by processing it on all machines
      * it's connected to.
+     * 
      *
      * @param fixtureId The ID of the fixture to process
      * @return A summary of the processing result
@@ -264,14 +292,39 @@ public class FixtureServiceImpl implements FixtureService {
         fixturesByHostname.forEach((hostname, fixtureList) ->
                 log.info("Hostname: {} has fixture {}", hostname, fixture.getFileName()));
 
-        // Process each hostname with the fixture in parallel
-        List<CompletableFuture<Void>> futures = fixturesByHostname.entrySet().stream()
+        // Separate VPN and non-VPN machines
+        Map<String, List<Fixture>> nonVpnMachines = new HashMap<>();
+        Map<String, List<Fixture>> vpnMachines = new HashMap<>();
+
+        fixturesByHostname.forEach((hostname, fixtureList) -> {
+            Machine machine = machineRepository.findByHostname(hostname);
+            if (machine != null && machine.getVpnServer() != null) {
+                vpnMachines.put(hostname, fixtureList);
+            } else {
+                nonVpnMachines.put(hostname, fixtureList);
+            }
+        });
+
+        log.info("Processing fixture ID {} on {} non-VPN machines in parallel", fixtureId, nonVpnMachines.size());
+        log.info("Processing fixture ID {} on {} VPN machines sequentially", fixtureId, vpnMachines.size());
+
+        // Process non-VPN machines in parallel first
+        List<CompletableFuture<Void>> nonVpnFutures = nonVpnMachines.entrySet().stream()
                 .map(entry -> CompletableFuture.runAsync(() ->
                         processHostnameFixtures(entry.getKey(), entry.getValue()), executorService))
                 .toList();
 
-        // Wait for all processing to complete
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        if (!nonVpnFutures.isEmpty()) {
+            CompletableFuture.allOf(nonVpnFutures.toArray(new CompletableFuture[0])).join();
+            log.info("Completed processing fixture ID {} on all non-VPN machines", fixtureId);
+        }
+
+        // Process VPN machines sequentially (one at a time)
+        for (Map.Entry<String, List<Fixture>> vpnEntry : vpnMachines.entrySet()) {
+            log.info("Processing fixture ID {} on VPN machine: {}", fixtureId, vpnEntry.getKey());
+            processHostnameFixtures(vpnEntry.getKey(), vpnEntry.getValue());
+            log.info("Completed processing fixture ID {} on VPN machine: {}", fixtureId, vpnEntry.getKey());
+        }
 
         log.info("Maintenance report completed for fixture ID: {}", fixtureId);
 
