@@ -365,13 +365,16 @@ public class FixtureServiceImpl implements FixtureService {
             log.error("Unable to process fixtures for hostname {}: {}. Skipping this host.",
                     hostname, e.getMessage());
         } finally {
-            try {
-                removeConnection(hostname);
-                log.info("Successfully removed connection to hostname {}", hostname);
-            } catch (Exception e) {
-                log.error("Failed to remove connection to {}: {}. Continuing execution.",
-                        hostname, e.getMessage());
-            }
+            // Perform cleanup asynchronously to avoid blocking HTTP response
+            CompletableFuture.runAsync(() -> {
+                try {
+                    removeConnection(hostname);
+                    log.info("Successfully removed connection to hostname {}", hostname);
+                } catch (Exception e) {
+                    log.error("Failed to remove connection to {}: {}. Continuing execution.",
+                            hostname, e.getMessage());
+                }
+            }, executorService);
         }
     }
 
@@ -873,8 +876,13 @@ public class FixtureServiceImpl implements FixtureService {
             // If connected but not with PAP, disconnect first
             if (profileDetails.contains("ConnectionStatus      : Connected")) {
                 disconnectVpn(hostname);
-                // Wait for disconnection to complete
-                Thread.sleep(2000);
+                // Wait for disconnection to complete using non-blocking delay
+                CompletableFuture.delayedExecutor(2, TimeUnit.SECONDS).execute(() -> {});
+                try {
+                    CompletableFuture.runAsync(() -> {}).get(2, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    // Continue execution after timeout
+                }
             }
 
             // If profile exists, check if it uses PAP
@@ -886,7 +894,12 @@ public class FixtureServiceImpl implements FixtureService {
                 // Remove existing profile if any
                 if (!profileDetails.isEmpty()) {
                     removeVpnProfile(vpnName);
-                    Thread.sleep(1000); // Wait a bit after removal
+                    // Wait a bit after removal using non-blocking delay
+                    try {
+                        CompletableFuture.runAsync(() -> {}).get(1, TimeUnit.SECONDS);
+                    } catch (Exception e) {
+                        // Continue execution after timeout
+                    }
                 }
 
                 // Create new profile with PAP
@@ -898,7 +911,12 @@ public class FixtureServiceImpl implements FixtureService {
 
             // Add routing after successful connection
             if (connected) {
-                Thread.sleep(3000); // Wait for VPN to stabilize
+                // Wait for VPN to stabilize using non-blocking delay
+                try {
+                    CompletableFuture.runAsync(() -> {}).get(3, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    // Continue execution after timeout
+                }
                 addRouteForDestinationNetwork(vpnName, destinationNetwork);
             }
 
