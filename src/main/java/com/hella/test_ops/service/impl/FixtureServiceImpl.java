@@ -356,15 +356,9 @@ public class FixtureServiceImpl implements FixtureService {
             log.error("Unable to process fixtures for hostname {}: {}. Skipping this host.",
                     hostname, e.getMessage());
         } finally {
-            // Perform cleanup asynchronously to avoid blocking HTTP response
+            // Release connection asynchronously to avoid CORS timeout issues
             CompletableFuture.runAsync(() -> {
-                try {
-                    networkConnectionService.releaseConnection(hostname);
-                    log.info("Successfully removed connection to hostname {}", hostname);
-                } catch (Exception e) {
-                    log.error("Failed to remove connection to {}: {}. Continuing execution.",
-                            hostname, e.getMessage());
-                }
+                networkConnectionService.releaseConnection(hostname);
             }, executorService);
         }
     }
