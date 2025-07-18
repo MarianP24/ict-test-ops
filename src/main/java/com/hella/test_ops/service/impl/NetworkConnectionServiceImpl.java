@@ -1,5 +1,6 @@
 package com.hella.test_ops.service.impl;
 
+import com.hella.test_ops.entity.Fixture;
 import com.hella.test_ops.entity.Machine;
 import com.hella.test_ops.entity.VpnServer;
 import com.hella.test_ops.service.MachineService;
@@ -18,6 +19,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /**
  * Implementation of NetworkConnectionService that manages network connections
@@ -937,6 +940,19 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
 
         } catch (Exception e) {
             log.error("Error adding route for destination network {}: {}", destinationNetwork, e.getMessage());
+        }
+    }
+
+    @Override
+    public void processFilesWithConnection(String hostname, List<Fixture> fixtures,
+                                           BiConsumer<Fixture, String> fileProcessor) throws IOException {
+        String connection = establishConnection(hostname);
+        try {
+            for (Fixture fixture : fixtures) {
+                fileProcessor.accept(fixture, connection);
+            }
+        } finally {
+            releaseConnection(hostname);
         }
     }
 }

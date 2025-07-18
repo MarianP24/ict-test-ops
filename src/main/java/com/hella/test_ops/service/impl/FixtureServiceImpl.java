@@ -346,22 +346,19 @@ public class FixtureServiceImpl implements FixtureService {
     private void processHostnameFixtures(String hostname, List<Fixture> fixtures) {
         log.info("Starting to process {} fixtures for hostname {}", fixtures.size(), hostname);
         try {
-            String uncBasePath = networkConnectionService.establishConnection(hostname);
-
-            for (Fixture fixture : fixtures) {
-                processSingleFixture(fixture, hostname, uncBasePath);
-            }
+            // Use the method that ensures connection and file access happen in same context
+            networkConnectionService.processFilesWithConnection(hostname, fixtures,
+                    (fixture, uncBasePath) -> {
+                        processSingleFixture(fixture, hostname, uncBasePath);
+                    });
             log.info("Completed processing all fixtures for hostname {}", hostname);
         } catch (IOException e) {
             log.error("Unable to process fixtures for hostname {}: {}. Skipping this host.",
                     hostname, e.getMessage());
-        } finally {
-            // Release connection asynchronously to avoid CORS timeout issues
-            CompletableFuture.runAsync(() -> {
-                networkConnectionService.releaseConnection(hostname);
-            }, executorService);
         }
+        // No need for manual connection release - it's handled by processFilesWithConnection
     }
+
 
     @PreDestroy
     private void clearCounters() {

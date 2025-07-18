@@ -1,6 +1,11 @@
 package com.hella.test_ops.service;
 
+import com.hella.test_ops.entity.Fixture;
+
 import java.io.IOException;
+import java.util.List;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /**
  * Service interface for managing network connections to remote machines.
@@ -32,7 +37,7 @@ public interface NetworkConnectionService {
      * Checks if an active connection exists to the specified hostname.
      * 
      * @param hostname The hostname to check
-     * @return true if connection is active, false otherwise
+     * @return true if the connection is active, false otherwise
      */
     boolean isConnectionActive(String hostname);
     
@@ -47,4 +52,12 @@ public interface NetworkConnectionService {
      * Called periodically to prevent connection leaks.
      */
     void cleanupStaleConnections();
+
+    /**
+     * Executes the given operation with an established connection.
+     * Ensures connection and file access happen in the same process context.
+     */
+
+    void processFilesWithConnection(String hostname, List<Fixture> fixtures,
+                                    BiConsumer<Fixture, String> fileProcessor) throws IOException;
 }
