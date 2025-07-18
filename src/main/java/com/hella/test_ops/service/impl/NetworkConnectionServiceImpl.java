@@ -14,6 +14,8 @@ import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -37,13 +39,6 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
     private final ConcurrentHashMap<String, Object> connectionLocks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, AtomicInteger> connectionReferences = new ConcurrentHashMap<>();
 
-    // Configuration
-    @Value("${network.share.username}")
-    private String username;
-
-    @Value("${network.share.password}")
-    private String password;
-
     @Value("${network.share.vpnUsername}")
     private String vpnUsername;
 
@@ -54,6 +49,8 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
     private String machineAccessPassword;
 
     // Constants
+    private static final String POWERSHELL_EXE = "powershell.exe";
+    private static final String POWERSHELL_COMMAND_FLAG = "-Command";
     private static final long CONNECTION_TIMEOUT = 300000; // 5 minutes
 
     public NetworkConnectionServiceImpl(MachineService machineService, AppConfigReader appConfigReader) {
@@ -80,11 +77,11 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
 
     @Override
     public String establishConnection(String hostname) throws IOException {
-        // Get or create lock for this hostname
+        // Get or create the lock for this hostname
         Object lock = connectionLocks.computeIfAbsent(hostname, k -> new Object());
 
         synchronized (lock) {
-            // Check if connection already exists and is still valid
+            // Check if the connection already exists and is still valid
             String existingConnection = activeConnections.get(hostname);
             if (existingConnection != null && isConnectionValid(hostname)) {
                 // Increment reference count
@@ -103,10 +100,10 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
                 forceCleanupConnectionInternal(hostname);
             }
 
-            // Establish new connection
+            // Establish the new connection
             String newConnection = establishNewConnection(hostname);
 
-            // Set initial reference count to 1
+            // Set the initial reference count to 1
             connectionReferences.put(hostname, new AtomicInteger(1));
             log.debug("New connection established to {} (refs: 1)", hostname);
 
@@ -182,47 +179,48 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
     @Scheduled(fixedRate = 300000) // Every 5 minutes
     public void cleanupStaleConnections() {
         long currentTime = System.currentTimeMillis();
-
-        // Use iterator to safely remove entries
-        connectionTimestamps.entrySet().removeIf(entry -> {
-            String hostname = entry.getKey();
-            long timestamp = entry.getValue();
-
+        List<String> toRemove = new ArrayList<>();
+        
+        // First pass: identify potentially stale connections
+        connectionTimestamps.forEach((hostname, timestamp) -> {
             if (currentTime - timestamp > CONNECTION_TIMEOUT) {
-                Object lock = connectionLocks.get(hostname);
-                if (lock != null) {
-                    synchronized (lock) {
-                        // Force cleanup regardless of reference count for timeout
+                toRemove.add(hostname);
+            }
+        });
+        
+        // Early exit if no stale connections found
+        if (toRemove.isEmpty()) {
+            log.debug("No stale connections found during cleanup");
+            return;
+        }
+        
+        log.debug("Found {} potentially stale connections to cleanup", toRemove.size());
+        
+        // Second pass: cleanup with double-check for race condition protection
+        toRemove.forEach(hostname -> {
+            Object lock = connectionLocks.get(hostname);
+            if (lock != null) {
+                synchronized (lock) {
+                    // Double-check if still stale (prevents race conditions)
+                    Long currentTimestamp = connectionTimestamps.get(hostname);
+                    if (currentTimestamp != null && 
+                        currentTime - currentTimestamp > CONNECTION_TIMEOUT) {
+                        
                         AtomicInteger refCount = connectionReferences.get(hostname);
                         log.info("Force cleaning up stale connection to {} due to timeout (refs: {})",
                                 hostname, refCount != null ? refCount.get() : 0);
-
+                        
                         forceCleanupConnectionInternal(hostname);
                         activeConnections.remove(hostname);
                         connectionReferences.remove(hostname);
-                        return true;
+                        connectionTimestamps.remove(hostname);
                     }
                 }
             }
-            return false;
         });
     }
 
-    /**
-     * Gets the current reference count for a hostname (for testing/monitoring)
-     */
-    public int getConnectionReferenceCount(String hostname) {
-        AtomicInteger refCount = connectionReferences.get(hostname);
-        return refCount != null ? refCount.get() : 0;
-    }
-
-    /**
-     * Gets the total number of active connections (for monitoring)
-     */
-    public int getActiveConnectionCount() {
-        return activeConnections.size();
-    }
-
+    // new method
     private String establishNewConnection(String hostname) throws IOException {
         try {
             log.info("Attempting to establish connection to {}", hostname);
@@ -250,33 +248,27 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
     /**
      * Creates a connection with intelligent error handling for Windows Error 1219
      */
+    // new method
     private String createConnectionWithErrorHandling(String hostname) throws IOException {
         try {
-            // Try to create connection directly first
             return createConnection(hostname);
         } catch (IOException e) {
-            // Check if it's Windows Error 1219 (multiple connections)
             if (e.getMessage().contains("1219") || e.getMessage().contains("multiple connections")) {
                 log.info("Windows Error 1219 detected for {}. Cleaning up existing connections.", hostname);
-
-                // Only now do the cleanup
                 forceDisconnectAllConnectionsToHost(hostname);
 
-                // Wait briefly and retry
+                // Brief pause to allow cleanup to complete
                 try {
-                    Thread.sleep(1000);
+                    TimeUnit.SECONDS.sleep(1); // More semantic than MILLISECONDS.sleep(1000)
                     return createConnection(hostname);
                 } catch (InterruptedException ex) {
                     Thread.currentThread().interrupt();
                     throw new IOException("Connection retry was interrupted", ex);
                 }
             }
-
-            // Re-throw if not Error 1219
             throw e;
         }
     }
-
 
     private String createConnection(String hostname) throws IOException {
         Machine machine = machineService.findByHostname(hostname);
@@ -299,7 +291,7 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
                 throw new IOException("Failed to establish VPN connection for " + hostname);
             }
 
-            // Use IP from destination network if available
+            // Use IP from the destination network if available
             VpnServer vpnServer = machine.getVpnServer();
             String destinationNetwork = vpnServer.getDestinationNetwork();
             if (destinationNetwork != null && destinationNetwork.contains("/")) {
@@ -341,7 +333,7 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
             return false;
         }
 
-        // Check if connection has timed out
+        // Check if the connection has timed out
         if (System.currentTimeMillis() - timestamp > CONNECTION_TIMEOUT) {
             return false;
         }
@@ -368,40 +360,69 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
             // Only disconnect the specific C$ administrative share that our application creates
             String targetPath = "\\\\" + hostname + "\\C$";
             
-            try {
-                ProcessBuilder disconnectBuilder = new ProcessBuilder("net", "use", targetPath, "/delete", "/y");
-                disconnectBuilder.redirectErrorStream(true);
-                Process disconnectProcess = disconnectBuilder.start();
-                
-                StringBuilder output = new StringBuilder();
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(disconnectProcess.getInputStream()))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        output.append(line).append("\n");
-                    }
-                }
-                
-                boolean completed = disconnectProcess.waitFor(10, TimeUnit.SECONDS);
-                if (!completed) {
-                    disconnectProcess.destroyForcibly();
-                    log.warn("Disconnection of {} timed out", targetPath);
-                } else {
-                    int exitCode = disconnectProcess.exitValue();
-                    if (exitCode == 0) {
-                        log.info("Successfully disconnected application connection: {}", targetPath);
-                    } else {
-                        log.debug("Disconnect result for {}: exit code {}, output: {}", 
-                                targetPath, exitCode, output.toString().trim());
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("Failed to disconnect {}: {}", targetPath, e.getMessage());
+            boolean success = executeNetworkDisconnect(targetPath);
+            if (success) {
+                log.info("Application-specific connection cleanup completed for {}", hostname);
+            } else {
+                log.warn("Application-specific connection cleanup failed for {}", hostname);
             }
-
-            log.info("Application-specific connection cleanup completed for {}", hostname);
 
         } catch (Exception e) {
             log.warn("Error during force disconnect of connections to {}: {}", hostname, e.getMessage());
+        }
+    }
+
+    private boolean executeNetworkDisconnect(String targetPath) {
+        Process disconnectProcess = null;
+        
+        try {
+            ProcessBuilder disconnectBuilder = new ProcessBuilder("net", "use", targetPath, "/delete", "/y");
+            disconnectBuilder.redirectErrorStream(true);
+            disconnectProcess = disconnectBuilder.start();
+            
+            StringBuilder output = readProcessOutput(disconnectProcess);
+            
+            boolean completed = disconnectProcess.waitFor(10, TimeUnit.SECONDS);
+            if (!completed) {
+                disconnectProcess.destroyForcibly();
+                log.warn("Disconnection of {} timed out", targetPath);
+                return false;
+            }
+            
+            return handleDisconnectResult(targetPath, disconnectProcess, output);
+            
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Disconnect process for {} was interrupted, forcing termination", targetPath);
+            disconnectProcess.destroyForcibly();
+            return false;
+            
+        } catch (IOException e) {
+            log.warn("Failed to disconnect {}: {}", targetPath, e.getMessage());
+            return false;
+        }
+    }
+
+    private StringBuilder readProcessOutput(Process process) throws IOException {
+        StringBuilder output = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line).append("\n");
+            }
+        }
+        return output;
+    }
+
+    private boolean handleDisconnectResult(String targetPath, Process process, StringBuilder output) {
+        int exitCode = process.exitValue();
+        if (exitCode == 0) {
+            log.info("Successfully disconnected application connection: {}", targetPath);
+            return true;
+        } else {
+            log.debug("Disconnect result for {}: exit code {}, output: {}", 
+                    targetPath, exitCode, output.toString().trim());
+            return false;
         }
     }
 
@@ -430,8 +451,21 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
         try {
             ProcessBuilder processBuilder = new ProcessBuilder("ping", "-n", "1", hostname);
             Process process = processBuilder.start();
-            int exitCode = process.waitFor();
-            return exitCode == 0;
+
+            // Add timeout to prevent hanging indefinitely
+            boolean finished = process.waitFor(5, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                log.warn("Host reachability check for {} timed out", hostname);
+                return false;
+            }
+
+            return process.exitValue() == 0;
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Host reachability check for {} was interrupted", hostname);
+            return false;
         } catch (Exception e) {
             log.warn("Error checking host reachability for {}: {}", hostname, e.getMessage());
             return false;
@@ -439,95 +473,112 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
     }
 
     // checked with older code
+
     private boolean connectVpn(String hostname) throws IOException {
         log.info("Checking if VPN connection is needed for hostname: {}", hostname);
 
-        Machine machine = machineService.findByHostname(hostname);
-        if (machine == null) {
-            log.error("Cannot find machine with hostname: {}", hostname);
+        VpnConnectionContext context = validateAndGetVpnContext(hostname);
+        if (context == null) {
             return false;
         }
 
-        // Check if machine has VPN server configuration
-        VpnServer vpnServer = machine.getVpnServer();
-        if (vpnServer == null) {
+        if (context.vpnServer == null) {
             log.debug("No VPN configuration for hostname: {}", hostname);
             return true;
         }
 
-        String vpnName = vpnServer.getVpnName();
-        String serverAddress = vpnServer.getServerAddress();
-        String destinationNetwork = vpnServer.getDestinationNetwork();
-
-        log.info("VPN configuration found for hostname {}: server={}, network={}", 
-                 hostname, serverAddress, destinationNetwork);
+        log.info("VPN configuration found for hostname {}: server={}, network={}",
+                hostname, context.vpnServer.getServerAddress(), context.vpnServer.getDestinationNetwork());
 
         try {
-            // Check if VPN is already connected with the correct settings
-            String profileDetails = checkVpnProfileDetails(vpnName);
-
-            // If already connected with PAP, check and add routing if needed
-            if (profileDetails.contains("ConnectionStatus      : Connected") &&
-                    profileDetails.contains("AuthenticationMethod  : {Pap}")) {
-                log.info("VPN is already connected with PAP authentication, skipping setup");
-                return true;
-            }
-
-            // If connected but not with PAP, disconnect first
-            if (profileDetails.contains("ConnectionStatus      : Connected")) {
-                disconnectVpn(hostname);
-                // Wait for disconnection to complete using non-blocking delay
-                CompletableFuture.delayedExecutor(2, TimeUnit.SECONDS).execute(() -> {});
-                try {
-                    CompletableFuture.runAsync(() -> {}).get(2, TimeUnit.SECONDS);
-                } catch (Exception e) {
-                    // Continue execution after timeout
-                }
-            }
-
-            // If profile exists, check if it uses PAP
-            boolean needNewProfile = profileDetails.isEmpty() ||
-                    !profileDetails.contains("AuthenticationMethod  : {Pap}");
-
-            // Only recreate the profile if needed
-            if (needNewProfile) {
-                // Remove existing profile if any
-                if (!profileDetails.isEmpty()) {
-                    removeVpnProfile(vpnName);
-                    // Wait a bit after removal using non-blocking delay
-                    try {
-                        CompletableFuture.runAsync(() -> {}).get(1, TimeUnit.SECONDS);
-                    } catch (Exception e) {
-                        // Continue execution after timeout
-                    }
-                }
-
-                // Create new profile with PAP
-                createVpnProfile(vpnName, serverAddress);
-            }
-
-            // Try to connect with the VPN profile
-            boolean connected = connectToVpn(vpnName);
-
-            // Add routing after successful connection
-            if (connected) {
-                // Wait for VPN to stabilize using non-blocking delay
-                try {
-                    CompletableFuture.runAsync(() -> {}).get(3, TimeUnit.SECONDS);
-                } catch (Exception e) {
-                    // Continue execution after timeout
-                }
-                addRouteForDestinationNetwork(vpnName, destinationNetwork);
-            }
-
-            return connected;
-
+            return establishVpnConnection(context);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.error("VPN connection process was interrupted", e);
             throw new IOException("VPN connection was interrupted", e);
         }
     }
+
+    private VpnConnectionContext validateAndGetVpnContext(String hostname) {
+        Machine machine = machineService.findByHostname(hostname);
+        if (machine == null) {
+            log.error("Cannot find machine with hostname: {}", hostname);
+            return null;
+        }
+        return new VpnConnectionContext(machine, machine.getVpnServer());
+    }
+
+    private boolean establishVpnConnection(VpnConnectionContext context) throws InterruptedException, IOException {
+        String vpnName = context.vpnServer.getVpnName();
+        String serverAddress = context.vpnServer.getServerAddress();
+        String destinationNetwork = context.vpnServer.getDestinationNetwork();
+
+        String profileDetails = checkVpnProfileDetails(vpnName);
+
+        if (isVpnAlreadyConnectedWithPap(profileDetails)) {
+            log.info("VPN is already connected with PAP authentication, skipping setup");
+            return true;
+        }
+
+        handleExistingConnection(profileDetails, context);
+        ensureVpnProfileExists(profileDetails, vpnName, serverAddress);
+
+        boolean connected = connectToVpn(vpnName);
+        if (connected) {
+            waitAndAddRouting(vpnName, destinationNetwork);
+        }
+
+        return connected;
+    }
+
+    private boolean isVpnAlreadyConnectedWithPap(String profileDetails) {
+        return profileDetails.contains("ConnectionStatus      : Connected") &&
+                profileDetails.contains("AuthenticationMethod  : {Pap}");
+    }
+
+    private void handleExistingConnection(String profileDetails, VpnConnectionContext context) {
+        if (profileDetails.contains("ConnectionStatus      : Connected")) {
+            disconnectVpn(context.machine.getHostname()); // Fixed: use hostname, not vpnName
+            waitNonBlocking(2);
+        }
+    }
+
+    private void ensureVpnProfileExists(String profileDetails, String vpnName, String serverAddress)
+            throws InterruptedException, IOException {
+        boolean needNewProfile = !profileDetails.contains("AuthenticationMethod  : {Pap}");
+
+        if (needNewProfile) {
+            if (!profileDetails.isEmpty()) {
+                removeVpnProfile(vpnName);
+                waitNonBlocking(1);
+            }
+            createVpnProfile(vpnName, serverAddress);
+        }
+    }
+
+    private void waitAndAddRouting(String vpnName, String destinationNetwork) {
+        waitNonBlocking(3);
+        addRouteForDestinationNetwork(vpnName, destinationNetwork);
+    }
+
+    private void waitNonBlocking(int seconds) {
+        try {
+            CompletableFuture.runAsync(() -> {}).get(seconds, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            // Continue execution after timeout
+        }
+    }
+
+    private static class VpnConnectionContext {
+        final Machine machine;
+        final VpnServer vpnServer;
+
+        VpnConnectionContext(Machine machine, VpnServer vpnServer) {
+            this.machine = machine;
+            this.vpnServer = vpnServer;
+        }
+    }
+
 
     private void disconnectVpn(String hostname) {
         try {
@@ -563,7 +614,7 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
     // checked with older code
     private String checkVpnProfileDetails(String vpnName) throws IOException, InterruptedException {
         ProcessBuilder checkVpnBuilder = new ProcessBuilder(
-                "powershell.exe", "-Command",
+                POWERSHELL_EXE, POWERSHELL_COMMAND_FLAG,
                 "Get-VpnConnection -Name '" + vpnName + "' -ErrorAction SilentlyContinue"
         );
         checkVpnBuilder.redirectErrorStream(true);
@@ -591,7 +642,7 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
     private void removeVpnProfile(String vpnName) throws IOException, InterruptedException {
         log.info("Removing existing VPN profile: {}", vpnName);
         ProcessBuilder removeBuilder = new ProcessBuilder(
-                "powershell.exe", "-Command",
+                POWERSHELL_EXE, POWERSHELL_COMMAND_FLAG,
                 "Remove-VpnConnection -Name '" + vpnName + "' -Force -ErrorAction SilentlyContinue"
         );
         removeBuilder.redirectErrorStream(true);
@@ -605,7 +656,7 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
             }
         }
 
-        boolean removeCompleted = removeProcess.waitFor(10, TimeUnit.SECONDS);
+        removeProcess.waitFor(10, TimeUnit.SECONDS);
         log.info("VPN profile removal result: {}", removeOutput.toString().trim());
     }
 
@@ -614,7 +665,7 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
     private void createVpnProfile(String vpnName, String serverAddress) throws IOException, InterruptedException {
         log.info("Creating VPN profile with PAP authentication: {}", vpnName);
         ProcessBuilder createVpnBuilder = new ProcessBuilder(
-                "powershell.exe", "-Command",
+                POWERSHELL_EXE, POWERSHELL_COMMAND_FLAG,
                 "Add-VpnConnection -Name '" + vpnName + "' " +
                         "-ServerAddress '" + serverAddress + "' " +
                         "-TunnelType L2tp " +
@@ -653,12 +704,7 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
         log.info("Connecting to VPN: {}", vpnName);
         String rasdialPath = System.getenv("WINDIR") + "\\System32\\rasdial.exe";
 
-        boolean connected = tryRasdialConnect(rasdialPath, vpnName, vpnUsername, vpnPassword);
-        if (connected) {
-            return true;
-        }
-
-        return false;
+        return tryRasdialConnect(rasdialPath, vpnName, vpnUsername, vpnPassword);
     }
 
     // Helper method to try a VPN connection with specific credentials
@@ -667,7 +713,6 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
             throws IOException, InterruptedException {
 
         log.info("Attempting VPN connection with username: {}", vpnUsername);
-        //log.debug("Password length: {}", vpnPassword != null ? vpnPassword.length() : 0);
 
         ProcessBuilder connectBuilder = new ProcessBuilder(
                 rasdialPath, vpnName, vpnUsername, vpnPassword
@@ -736,7 +781,7 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
         try {
             log.info("Creating direct connection for user: {}", connectionUsername);
 
-            // Check if host is reachable first
+            // Check if the host is reachable first
             if (!isHostReachable(connectionTarget)) {
                 throw new IOException(String.format("Host %s is not reachable (machine may be shut down or network issue)", connectionTarget));
             }
@@ -790,9 +835,11 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
         try {
             // Create batch file content
             String batchContent = String.format(
-                    "@echo off\n" +
-                            "net use \"\\\\%s\\C$\" \"%s\" /user:\"%s\" /persistent:no\n" +
-                            "echo Connection completed with exit code %%ERRORLEVEL%%\n",
+                    """
+                            @echo off
+                            net use "\\\\%s\\C$" "%s" /user:"%s" /persistent:no
+                            echo Connection completed with exit code %%ERRORLEVEL%%
+                            """,
                     connectionTarget, connectionPassword, connectionUsername
             );
 
@@ -805,7 +852,7 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
                     "runas",
                     "/netonly",
                     "/user:" + connectionUsername,
-                    "cmd.exe /c \"" + batchFile.toString() + "\""
+                    "cmd.exe /c \"" + batchFile + "\""
             );
 
             processBuilder.redirectErrorStream(true);
@@ -849,7 +896,7 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
             }
 
         } finally {
-            // Clean up temporary batch file
+            // Clean up the temporary batch file
             try {
                 Files.deleteIfExists(batchFile);
             } catch (IOException e) {
@@ -874,7 +921,7 @@ public class NetworkConnectionServiceImpl implements NetworkConnectionService {
                     destinationNetwork, vpnName
             );
 
-            ProcessBuilder addRouteBuilder = new ProcessBuilder("powershell.exe", "-Command", powerShellCommand);
+            ProcessBuilder addRouteBuilder = new ProcessBuilder(POWERSHELL_EXE, POWERSHELL_COMMAND_FLAG, powerShellCommand);
             Process addRouteProcess = addRouteBuilder.start();
 
             String routeOutput = new String(addRouteProcess.getInputStream().readAllBytes());
